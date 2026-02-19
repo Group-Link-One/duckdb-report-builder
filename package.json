@@ -1,0 +1,41 @@
+{
+    "name": "duckdb-report-builder",
+    "version": "1.0.0",
+    "description": "A SQL-first report builder using DuckDB for data transformation and orchestration",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "license": "MIT",
+    "keywords": [
+        "duckdb",
+        "report",
+        "sql",
+        "data-transformation",
+        "etl",
+        "pipeline"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/your-org/report-builder.git",
+        "directory": "packages/core"
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json",
+        "test": "jest",
+        "organize-imports": "organize-imports-cli tsconfig.json"
+    },
+    "dependencies": {
+        "@duckdb/node-api": "^1.4.3-r.3"
+    },
+    "devDependencies": {
+        "@types/jest": "^29.5.0",
+        "jest": "^29.5.0",
+        "ts-jest": "^29.0.5",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.0.4"
+    },
+    "files": [
+        "dist",
+        "README.md",
+        "LICENSE"
+    ]
+}
