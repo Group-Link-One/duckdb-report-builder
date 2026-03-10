@@ -1,6 +1,6 @@
 {
     "name": "duckdb-report-builder",
-    "version": "1.0.0",
+    "version": "0.1.0",
     "description": "A SQL-first report builder using DuckDB for data transformation and orchestration",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
@@ -15,7 +15,7 @@
     ],
     "repository": {
         "type": "git",
-        "url": "https://github.com/your-org/report-builder.git",
+        "url": "https://github.com/Group-Link-One/duckdb-report-builder.git",
         "directory": "packages/core"
     },
     "scripts": {
