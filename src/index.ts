@@ -33,15 +33,10 @@ export {
 } from './query-plan/query-plan';
 // Sinks
 export { FileSink } from './sinks/file-sink';
-export { StreamSink } from './sinks/stream-sink';
 export { buildCTE, quoteIdentifier } from './sql-generator/cte-builder';
 // Format Generator
-export { FormatGenerator, type FormatConfig } from './sql-generator/format-generator';
+export { generateFormatCTE, formatValue, type FormatConfig } from './sql-generator/format-generator';
 // SQL Generator (exposed for advanced use cases)
-export { SQLGenerator, type SQLGeneratorOptions } from './sql-generator/sql-generator';
-
-
-
-
+export { SQLGenerator, type GeneratedSQL, type GeneratedTempTablePlan, type TempTableStep, type SQLGeneratorOptions } from './sql-generator/sql-generator';
 
 

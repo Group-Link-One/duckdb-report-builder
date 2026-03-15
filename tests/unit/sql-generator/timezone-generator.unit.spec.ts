@@ -6,8 +6,8 @@
 
 import { TimezoneTransform } from '../../../src/query-plan/query-plan';
 import {
-    generateTimezoneExpression, generateTimezoneRawSQL, generateTimezoneSQL, generateTimezoneSQLWithColumns, getTimezoneCTEName,
-    validateTimezoneTransform
+    generateTimezoneExpression, generateTimezoneRawSQL, generateTimezoneSQL,
+    getTimezoneCTEName, validateTimezoneTransform
 } from '../../../src/sql-generator/timezone-generator';
 
 describe('Timezone Generator', () => {
@@ -184,24 +184,6 @@ describe('Timezone Generator', () => {
 
             expect(sql).toContain('brazil_time AS (');
             expect(sql).not.toContain('readings_tz');
-        });
-    });
-
-    describe('generateTimezoneSQLWithColumns', () => {
-        it('should generate timezone SQL with explicit columns', () => {
-            const transform: TimezoneTransform = {
-                type: 'timezone',
-                sourceAlias: 'readings',
-                timestampColumns: ['timestamp'],
-                timezone: 'America/Sao_Paulo',
-            };
-
-            const sql = generateTimezoneSQLWithColumns(transform, 'source_table', ['id', 'value']);
-
-            expect(sql).toContain('readings_tz AS (');
-            expect(sql).toContain('id');
-            expect(sql).toContain('value');
-            expect(sql).toContain("(timestamp AT TIME ZONE 'America/Sao_Paulo') AS timestamp");
         });
     });
 

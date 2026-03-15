@@ -177,9 +177,8 @@ export class SQLGenerator {
             const cteName = getCoarsenCTEName(transform);
             return { cte, cteName };
         } else if (isApplyEnrichmentTransform(transform)) {
-            // Get source and lookup tables (support both old and new field names)
             const sourceTable = this.resolveTableName(transform.sourceAlias, sourceTableMap, existingCTEs);
-            const lookupAlias = (transform as any).lookupSourceAlias || (transform as any).contextSourceAlias;
+            const lookupAlias = transform.lookupSourceAlias;
             const lookupTable = this.resolveTableName(lookupAlias, sourceTableMap, existingCTEs);
             const cte = generateApplyEnrichmentSQL(transform, sourceTable, lookupTable);
             const cteName = getApplyEnrichmentCTEName(transform);
@@ -216,23 +215,12 @@ export class SQLGenerator {
     private resolveTableName(alias: string, sourceTableMap: Map<string, string>, existingCTEs: string[]): string {
         // FIRST: Check if it's a CTE name with standard suffix for the given alias
         // This handles the case where we have transforms on a source (e.g., readings -> readings_pivoted)
-        // Check in order of typical pipeline: pivoted -> coarsened -> adjusted -> locf
-        const pivotedName = `${alias}_pivoted`;
-        const coarsenedName = `${alias}_coarsened`;
-        const adjustedName = `${alias}_adjusted`;
-        const locfName = `${alias}_locf`;
-
-        if (existingCTEs.includes(pivotedName)) {
-            return pivotedName;
-        }
-        if (existingCTEs.includes(coarsenedName)) {
-            return coarsenedName;
-        }
-        if (existingCTEs.includes(adjustedName)) {
-            return adjustedName;
-        }
-        if (existingCTEs.includes(locfName)) {
-            return locfName;
+        const suffixes = ['_pivoted', '_coarsened', '_enriched', '_locf', '_tz', '_windowed'];
+        for (const suffix of suffixes) {
+            const cteName = `${alias}${suffix}`;
+            if (existingCTEs.includes(cteName)) {
+                return cteName;
+            }
         }
 
         // SECOND: Check if the alias itself is already a CTE name (handles custom 'as' names)
@@ -309,7 +297,7 @@ export class SQLGenerator {
         // Process in order so later CTEs for the same base alias take precedence
         for (const cteName of cteNames) {
             // Extract base alias from CTE name (e.g., 'readings_pivoted' -> 'readings')
-            const extractedBaseAlias = cteName.replace(/_pivoted$|_locf$|_coarsened$|_adjusted$|_tz$|_windowed$/, '');
+            const extractedBaseAlias = cteName.replace(/_pivoted$|_locf$|_coarsened$|_enriched$|_tz$|_windowed$/, '');
             // Use resolveTableName to get the actual table (handles SQL injection)
             const actualTable = this.resolveTableName(cteName, sourceTableMap, cteNames);
             tableMap.set(cteName, actualTable);
@@ -457,7 +445,7 @@ export class SQLGenerator {
             };
         } else if (isApplyEnrichmentTransform(transform)) {
             const sourceTable = this.resolveTableName(transform.sourceAlias, tableMap, existingTables);
-            const lookupAlias = (transform as any).lookupSourceAlias || (transform as any).contextSourceAlias;
+            const lookupAlias = transform.lookupSourceAlias;
             const lookupTable = this.resolveTableName(lookupAlias, tableMap, existingTables);
             const tableName = getApplyEnrichmentCTEName(transform);
             const rawSQL = generateApplyEnrichmentRawSQL(transform, sourceTable, lookupTable);
@@ -501,15 +489,4 @@ export class SQLGenerator {
         return null;
     }
 
-    /**
-     * Format SQL if enabled
-     */
-    private formatSQL(sql: string): string {
-        if (!this.options.formatted) {
-            return sql;
-        }
-
-        // Basic formatting - can be enhanced later
-        return sql;
-    }
 }

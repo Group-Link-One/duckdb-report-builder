@@ -65,6 +65,5 @@ export class FileSink {
         await connection.runAndRead(`
             COPY (${query}) TO '${filePath}' (${optionsString});
         `);
-        console.log(`Copied query results to ${filePath}`);
     }
 }

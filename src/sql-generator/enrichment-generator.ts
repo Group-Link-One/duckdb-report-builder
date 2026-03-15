@@ -23,19 +23,17 @@ import { buildCTE, quoteIdentifier } from './cte-builder';
  * @throws Error if transform is invalid
  */
 export function validateApplyEnrichmentTransform(transform: ApplyEnrichmentTransform): void {
-    const lookupAlias = (transform as any).lookupSourceAlias || (transform as any).contextSourceAlias;
-    if (!lookupAlias) {
+    if (!transform.lookupSourceAlias) {
         throw new Error('ApplyEnrichment transform must specify lookupSourceAlias');
     }
     if (transform.joinOn.length === 0) {
         throw new Error('ApplyEnrichment transform must specify at least one join key');
     }
-    const formulas = (transform as any).formulas || (transform as any).adjustments;
-    if (!formulas || Object.keys(formulas).length === 0) {
+    if (!transform.formulas || Object.keys(transform.formulas).length === 0) {
         throw new Error('ApplyEnrichment transform must specify at least one formula');
     }
-    for (const [columnName, enrichment] of Object.entries(formulas)) {
-        const formula = (enrichment as any).formula;
+    for (const [columnName, enrichment] of Object.entries(transform.formulas)) {
+        const formula = enrichment.formula;
         if (!formula || formula.trim() === '') {
             throw new Error(`Enrichment formula for column "${columnName}" must have a non-empty formula`);
         }
@@ -69,11 +67,9 @@ export function generateApplyEnrichmentRawSQL(
     });
     const joinClause = joinConditions.join(' AND ');
 
-    // Build enrichment columns (support both formulas and adjustments for backward compat)
-    const formulas = (transform as any).formulas || (transform as any).adjustments;
-    const enrichmentColumns = Object.entries(formulas).map(([columnName, enrichment]) => {
+    const enrichmentColumns = Object.entries(transform.formulas).map(([columnName, enrichment]) => {
         const quotedColumn = quoteIdentifier(columnName);
-        const formula = (enrichment as any).formula;
+        const formula = enrichment.formula;
         return `${formula} AS ${quotedColumn}`;
     });
 
@@ -111,32 +107,6 @@ export function generateApplyEnrichmentSQL(
     return buildCTE(cteName, rawSQL);
 }
 
-/**
- * Generate SQL with explicit column selection (wrapped in CTE)
- *
- * @param transform - ApplyEnrichment transform specification
- * @param sourceTable - Source table or CTE name
- * @param lookupTable - Lookup table name
- * @param selectColumns - Columns to select from source
- * @returns CTE SQL for the enriched result
- */
-export function generateApplyEnrichmentSQLWithColumns(
-    transform: ApplyEnrichmentTransform,
-    sourceTable: string,
-    lookupTable: string,
-    selectColumns: string[]
-): string {
-    const cteName = transform.as || `${transform.sourceAlias}_enriched`;
-    const rawSQL = generateApplyEnrichmentRawSQL(transform, sourceTable, lookupTable, selectColumns);
-    return buildCTE(cteName, rawSQL);
-}
-
-/**
- * Get the CTE name for an apply enrichment transform
- *
- * @param transform - ApplyEnrichment transform specification
- * @returns CTE name
- */
 export function getApplyEnrichmentCTEName(transform: ApplyEnrichmentTransform): string {
     return transform.as || `${transform.sourceAlias}_enriched`;
 }

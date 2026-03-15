@@ -25,11 +25,9 @@ export class InMemoryProvider extends BaseDataSourceProvider {
     ) {
         super();
 
-        // If schema is provided, use it
         if (schema) {
             this.schema = schema;
         } else if (data.length > 0) {
-            // Otherwise, infer schema from first row
             this.schema = this.inferSchema(data[0]);
         } else {
             this.schema = [];
@@ -97,7 +95,6 @@ export class InMemoryProvider extends BaseDataSourceProvider {
 
         switch (columnType) {
             case 'VARCHAR':
-                // Escape single quotes
                 const escaped = String(value).replace(/'/g, "''");
                 return `'${escaped}'`;
             case 'TIMESTAMP':
@@ -129,23 +126,6 @@ export class InMemoryProvider extends BaseDataSourceProvider {
         const tableName = this.tableName || this.generateTableName('in_memory');
         const connection = context.connection;
 
-        if (this.data.length === 0) {
-            // Create empty table with schema
-            const columnDefs = this.schema
-                .map((col) => `${col.name} ${col.type}${col.nullable ? '' : ' NOT NULL'}`)
-                .join(',\n    ');
-
-            await connection.run(`
-                CREATE OR REPLACE TEMPORARY TABLE ${tableName} (
-                    ${columnDefs}
-                );
-            `);
-
-            console.log(`[InMemoryProvider] Created empty table ${tableName}`);
-            return tableName;
-        }
-
-        // Create table with schema
         const columnDefs = this.schema
             .map((col) => `${col.name} ${col.type}${col.nullable ? '' : ' NOT NULL'}`)
             .join(',\n    ');
@@ -156,8 +136,10 @@ export class InMemoryProvider extends BaseDataSourceProvider {
             );
         `);
 
-        // Build INSERT VALUES
-        const schemaMap = new Map(this.schema.map((col) => [col.name, col]));
+        if (this.data.length === 0) {
+            return tableName;
+        }
+
         const values = this.data
             .map((row) => {
                 const rowValues = this.schema.map((col) => {
@@ -175,20 +157,10 @@ export class InMemoryProvider extends BaseDataSourceProvider {
             VALUES ${values};
         `);
 
-        console.log(`[InMemoryProvider] Loaded ${this.data.length} rows into ${tableName}`);
-
         return tableName;
     }
 }
 
-/**
- * Convenience function to create an InMemoryProvider
- *
- * @param data - Array of objects to load
- * @param tableName - Optional table name
- * @param schema - Optional schema (will be inferred if not provided)
- * @returns InMemoryProvider instance
- */
 export function inMemoryProvider(
     data: Record<string, any>[],
     tableName?: string,

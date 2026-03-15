@@ -78,12 +78,6 @@ export function inferGroupByColumns(sourceColumns: string[], pivotColumn: string
     return sourceColumns.filter((col) => col !== pivotColumn && col !== valueColumn);
 }
 
-/**
- * Get the CTE name for a pivot transform
- *
- * @param transform - Pivot transform specification
- * @returns CTE name
- */
 export function getPivotCTEName(transform: PivotTransform): string {
     return transform.as || `${transform.sourceAlias}_pivoted`;
 }

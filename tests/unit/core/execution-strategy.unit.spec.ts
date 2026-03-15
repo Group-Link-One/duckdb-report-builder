@@ -168,10 +168,10 @@ describe('Execution Strategy', () => {
 
             const mockResult = {
                 columnCount: 1,
-                columnName: (i: number) => 'row_count',
+                columnName: (_i: number) => 'row_count',
                 chunkCount: 1,
-                getChunk: (i: number) => ({
-                    getRowObjects: (cols: string[]) => [{ row_count: 42n }],
+                getChunk: (_i: number) => ({
+                    getRowObjects: (_cols: string[]) => [{ row_count: 42n }],
                 }),
             };
 
@@ -204,10 +204,10 @@ describe('Execution Strategy', () => {
 
             const mockResult = {
                 columnCount: 1,
-                columnName: (i: number) => 'row_count',
+                columnName: (_i: number) => 'row_count',
                 chunkCount: 1,
-                getChunk: (i: number) => ({
-                    getRowObjects: (cols: string[]) => [{ row_count: 1000000n }],
+                getChunk: (_i: number) => ({
+                    getRowObjects: (_cols: string[]) => [{ row_count: 1000000n }],
                 }),
             };
 
@@ -241,8 +241,8 @@ describe('Execution Strategy', () => {
                 columnCount: 2,
                 columnName: (i: number) => (i === 0 ? 'id' : 'value'),
                 chunkCount: 1,
-                getChunk: (i: number) => ({
-                    getRowObjects: (cols: string[]) => [
+                getChunk: (_i: number) => ({
+                    getRowObjects: (_cols: string[]) => [
                         { id: 1, value: 'a' },
                         { id: 2, value: 'b' },
                         { id: 3, value: 'c' },
@@ -279,10 +279,10 @@ describe('Execution Strategy', () => {
 
             const mockResult = {
                 columnCount: 1,
-                columnName: (i: number) => 'id',
+                columnName: (_i: number) => 'id',
                 chunkCount: 1,
-                getChunk: (i: number) => ({
-                    getRowObjects: (cols: string[]) => [{ id: 1 }],
+                getChunk: (_i: number) => ({
+                    getRowObjects: (_cols: string[]) => [{ id: 1 }],
                 }),
             };
 
