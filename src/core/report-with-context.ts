@@ -53,10 +53,11 @@ export interface PivotConfig {
  * LOCF configuration for fluent API
  */
 export interface LocfConfig {
-    baseTimeline: string; // Timeline source alias
+    baseTimeline?: string; // Timeline source alias; omit for in-place LOCF
     joinKeys: string[]; // Join keys (e.g., ['device_id', 'channel'])
     columns: string[]; // Columns to carry forward
     maxLookbackSeconds?: number | null;
+    as?: string; // Optional output table rename
 }
 
 /**
@@ -251,6 +252,7 @@ export class ReportWithContext {
             joinKeys: config.joinKeys,
             columns: config.columns,
             maxLookbackSeconds: config.maxLookbackSeconds ?? null,
+            as: config.as,
         };
         this.transforms.push(locfTransform);
         return this;
@@ -802,7 +804,7 @@ export class ReportWithContext {
             case 'pivot':
                 return transform.as || `${transform.sourceAlias}_pivoted`;
             case 'locf':
-                return `${transform.sourceAlias}_locf`;
+                return transform.as || `${transform.sourceAlias}_locf`;
             case 'coarsen':
                 return transform.as || `${transform.sourceAlias}_coarsened`;
             case 'apply_enrichment':

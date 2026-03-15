@@ -63,10 +63,11 @@ export interface PivotTransform {
 export interface LocfTransform {
     type: 'locf';
     sourceAlias: string; // Source to apply LOCF to
-    baseTimelineAlias: string; // Timeline to fill (e.g., generated 24-hour timeline)
+    baseTimelineAlias?: string; // Timeline to fill; omit for in-place LOCF
     joinKeys: string[]; // Join keys (e.g., ['device_id', 'channel'])
     columns: string[]; // Columns to carry forward
     maxLookbackSeconds: number | null; // Maximum time to look back (null = unlimited)
+    as?: string; // Optional output table rename
 }
 
 /**
@@ -316,11 +317,11 @@ export function validateQueryPlan(plan: QueryPlan): void {
             if (!availableAliases.has(transform.sourceAlias)) {
                 throw new Error(`LOCF transform references unknown source: ${transform.sourceAlias}`);
             }
-            if (!availableAliases.has(transform.baseTimelineAlias)) {
+            if (transform.baseTimelineAlias && !availableAliases.has(transform.baseTimelineAlias)) {
                 throw new Error(`LOCF transform references unknown timeline source: ${transform.baseTimelineAlias}`);
             }
-            // Add the LOCF alias to available aliases
-            availableAliases.add(`${transform.sourceAlias}_locf`);
+            const locfAlias = transform.as || `${transform.sourceAlias}_locf`;
+            availableAliases.add(locfAlias);
         } else if (isCoarsenTransform(transform)) {
             if (!availableAliases.has(transform.sourceAlias)) {
                 throw new Error(`Coarsen transform references unknown source: ${transform.sourceAlias}`);

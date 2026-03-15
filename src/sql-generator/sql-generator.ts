@@ -164,9 +164,10 @@ export class SQLGenerator {
             const cteName = getPivotCTEName(transform);
             return { cte, cteName };
         } else if (isLocfTransform(transform)) {
-            // Get source and timeline tables
             const sourceTable = this.resolveTableName(transform.sourceAlias, sourceTableMap, existingCTEs);
-            const timelineTable = this.resolveTableName(transform.baseTimelineAlias, sourceTableMap, existingCTEs);
+            const timelineTable = transform.baseTimelineAlias
+                ? this.resolveTableName(transform.baseTimelineAlias, sourceTableMap, existingCTEs)
+                : undefined;
             const cte = generateLocfSQL(transform, sourceTable, timelineTable);
             const cteName = getLocfCTEName(transform);
             return { cte, cteName };
@@ -420,15 +421,18 @@ export class SQLGenerator {
             };
         } else if (isLocfTransform(transform)) {
             const sourceTable = this.resolveTableName(transform.sourceAlias, tableMap, existingTables);
-            const timelineTable = this.resolveTableName(transform.baseTimelineAlias, tableMap, existingTables);
+            const timelineTable = transform.baseTimelineAlias
+                ? this.resolveTableName(transform.baseTimelineAlias, tableMap, existingTables)
+                : undefined;
             const tableName = getLocfCTEName(transform);
             const rawSQL = generateLocfRawSQL(transform, sourceTable, timelineTable);
+            const dependsOn = timelineTable ? [sourceTable, timelineTable] : [sourceTable];
 
             return {
                 name: `transform:locf`,
                 tableName,
                 sql: `CREATE TEMP TABLE ${tableName} AS ${rawSQL}`,
-                dependsOn: [sourceTable, timelineTable],
+                dependsOn,
                 transformIndex: index,
             };
         } else if (isCoarsenTransform(transform)) {

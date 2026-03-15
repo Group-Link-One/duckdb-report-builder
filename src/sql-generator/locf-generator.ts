@@ -1,75 +1,85 @@
 /**
  * LOCF (Last Observation Carried Forward) SQL Generator
  *
- * Generates SQL for LOCF transformations using window functions.
+ * Generates SQL for LOCF transformations using correlated subqueries.
  * LOCF fills gaps in sparse data by carrying forward the last observed value.
  *
- * Example:
- *   Input:  timestamp | device_id | serial_number
- *           T1        | 100       | 2949494
- *           T2        | 100       | NULL
- *           T3        | 100       | NULL
- *
- *   Output: timestamp | device_id | serial_number
- *           T1        | 100       | 2949494
- *           T2        | 100       | 2949494 (carried forward)
- *           T3        | 100       | 2949494 (carried forward)
+ * Two modes:
+ *   Timeline-join: LEFT JOIN source onto a complete timeline, fill gaps via subquery.
+ *     Guarantees one output row per timeline slot. Requires a TimelineProvider.
+ *   In-place: Fill NULL columns within existing rows via subquery against the same table.
+ *     Faster — no timeline overhead. Use when rows exist but columns are sparse.
  */
 
 import { LocfTransform } from '../query-plan/query-plan';
 import { buildCTE, quoteIdentifier } from './cte-builder';
 
+function buildLocfExpression(
+    col: string,
+    sourceTable: string,
+    joinKeys: string[],
+    rowAlias: string,
+    maxLookbackSeconds: number | null
+): string {
+    const quotedCol = quoteIdentifier(col);
+    const keyPredicates = joinKeys
+        .map((key) => `prev.${quoteIdentifier(key)} = ${rowAlias}.${quoteIdentifier(key)}`)
+        .join(' AND ');
+
+    const lookbackClause = maxLookbackSeconds !== null
+        ? `\n                AND prev.timestamp >= ${rowAlias}.timestamp - INTERVAL '${maxLookbackSeconds} seconds'`
+        : '';
+
+    return `COALESCE(
+        ${rowAlias === 'source' ? `source.${quotedCol}` : quotedCol},
+        (
+            SELECT ${quotedCol}
+            FROM ${quoteIdentifier(sourceTable)} prev
+            WHERE ${keyPredicates}
+                AND prev.timestamp <= ${rowAlias}.timestamp${lookbackClause}
+                AND prev.${quotedCol} IS NOT NULL
+            ORDER BY prev.timestamp DESC
+            LIMIT 1
+        )
+    ) AS ${quotedCol}`;
+}
+
 /**
- * Generate raw SQL SELECT statement for an LOCF transform (without CTE wrapper)
- *
- * @param transform - LOCF transform specification
- * @param sourceTable - Source table or CTE name
- * @param baseTimelineTable - Base timeline table for gap filling
- * @returns Raw SELECT statement
+ * Generate in-place LOCF SQL (no timeline join).
+ * Fills NULL columns within existing rows using correlated subqueries.
  */
-export function generateLocfRawSQL(transform: LocfTransform, sourceTable: string, baseTimelineTable: string): string {
-    // Build LOCF expressions for each column using LAST_VALUE window function
-    const locfExpressions = transform.columns.map((col) => {
-        const quotedCol = quoteIdentifier(col);
+function generateInPlaceLocfRawSQL(transform: LocfTransform, sourceTable: string): string {
+    const locfExpressions = transform.columns.map((col) =>
+        buildLocfExpression(col, sourceTable, transform.joinKeys, 'curr', transform.maxLookbackSeconds)
+    );
 
-        if (transform.maxLookbackSeconds !== null) {
-            return `
-    COALESCE(
-        source.${quotedCol},
-        (
-            SELECT ${quotedCol}
-            FROM ${quoteIdentifier(sourceTable)} prev
-            WHERE ${transform.joinKeys.map((key) => `prev.${quoteIdentifier(key)} = base.${quoteIdentifier(key)}`).join(' AND ')}
-                AND prev.timestamp <= base.timestamp
-                AND prev.timestamp >= base.timestamp - INTERVAL '${transform.maxLookbackSeconds} seconds'
-                AND prev.${quotedCol} IS NOT NULL
-            ORDER BY prev.timestamp DESC
-            LIMIT 1
-        )
-    ) AS ${quotedCol}`.trim();
-        } else {
-            return `
-    COALESCE(
-        source.${quotedCol},
-        (
-            SELECT ${quotedCol}
-            FROM ${quoteIdentifier(sourceTable)} prev
-            WHERE ${transform.joinKeys.map((key) => `prev.${quoteIdentifier(key)} = base.${quoteIdentifier(key)}`).join(' AND ')}
-                AND prev.timestamp <= base.timestamp
-                AND prev.${quotedCol} IS NOT NULL
-            ORDER BY prev.timestamp DESC
-            LIMIT 1
-        )
-    ) AS ${quotedCol}`.trim();
-        }
-    });
+    const excludeClause = transform.columns.map(quoteIdentifier).join(', ');
 
-    // Build join conditions
+    return `
+SELECT
+    * EXCLUDE (${excludeClause}),
+    ${locfExpressions.join(',\n    ')}
+FROM ${quoteIdentifier(sourceTable)} curr
+    `.trim();
+}
+
+/**
+ * Generate timeline-join LOCF SQL.
+ * LEFT JOINs source onto a complete timeline, filling gaps via correlated subqueries.
+ */
+function generateTimelineJoinLocfRawSQL(
+    transform: LocfTransform,
+    sourceTable: string,
+    baseTimelineTable: string
+): string {
+    const locfExpressions = transform.columns.map((col) =>
+        buildLocfExpression(col, sourceTable, transform.joinKeys, 'base', transform.maxLookbackSeconds)
+    );
+
     const joinConditions = transform.joinKeys
         .map((key) => `base.${quoteIdentifier(key)} = source.${quoteIdentifier(key)}`)
         .join(' AND ');
 
-    // Select all columns from base timeline plus LOCF columns
     const baseColumns = transform.joinKeys.map((key) => `base.${quoteIdentifier(key)}`).join(',\n    ');
 
     return `
@@ -85,19 +95,33 @@ LEFT JOIN ${quoteIdentifier(sourceTable)} source
 }
 
 /**
- * Generate SQL for an LOCF transform (wrapped in CTE)
- *
- * @param transform - LOCF transform specification
- * @param sourceTable - Source table or CTE name
- * @param baseTimelineTable - Base timeline table for gap filling
- * @returns CTE SQL for the LOCF result
+ * Generate raw LOCF SQL. Dispatches to in-place or timeline-join based on
+ * whether baseTimelineTable is provided.
  */
-export function generateLocfSQL(transform: LocfTransform, sourceTable: string, baseTimelineTable: string): string {
-    const cteName = `${transform.sourceAlias}_locf`;
+export function generateLocfRawSQL(
+    transform: LocfTransform,
+    sourceTable: string,
+    baseTimelineTable?: string
+): string {
+    if (baseTimelineTable) {
+        return generateTimelineJoinLocfRawSQL(transform, sourceTable, baseTimelineTable);
+    }
+    return generateInPlaceLocfRawSQL(transform, sourceTable);
+}
+
+/**
+ * Generate LOCF SQL wrapped in a CTE.
+ */
+export function generateLocfSQL(
+    transform: LocfTransform,
+    sourceTable: string,
+    baseTimelineTable?: string
+): string {
+    const cteName = getLocfCTEName(transform);
     const rawSQL = generateLocfRawSQL(transform, sourceTable, baseTimelineTable);
     return buildCTE(cteName, rawSQL);
 }
 
 export function getLocfCTEName(transform: LocfTransform): string {
-    return `${transform.sourceAlias}_locf`;
+    return transform.as || `${transform.sourceAlias}_locf`;
 }
