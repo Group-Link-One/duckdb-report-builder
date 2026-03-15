@@ -5,7 +5,7 @@
  */
 
 import {
-    FormatConfig, FormatGenerator,
+    FormatConfig, generateFormatCTE, formatValue,
     getLocaleCSVDelimiter
 } from '../../../src/sql-generator/format-generator';
 
@@ -19,7 +19,7 @@ describe('Format Generator', () => {
                 },
             };
 
-            const sql = FormatGenerator.generateFormatCTE('source_table', config);
+            const sql = generateFormatCTE('source_table', config);
 
             expect(sql).toContain('SELECT');
             expect(sql).toContain("format('{:,.2f}', price) AS price_formatted");
@@ -35,7 +35,7 @@ describe('Format Generator', () => {
                 },
             };
 
-            const sql = FormatGenerator.generateFormatCTE('source_table', config);
+            const sql = generateFormatCTE('source_table', config);
 
             expect(sql).toContain("CONCAT('$ ', format('{:,.2f}', price))");
         });
@@ -48,7 +48,7 @@ describe('Format Generator', () => {
                 },
             };
 
-            const sql = FormatGenerator.generateFormatCTE('source_table', config);
+            const sql = generateFormatCTE('source_table', config);
 
             expect(sql).toContain("CONCAT(format('{:,.3f}', consumption), ' kWh')");
         });
@@ -61,7 +61,7 @@ describe('Format Generator', () => {
                 },
             };
 
-            const sql = FormatGenerator.generateFormatCTE('source_table', config);
+            const sql = generateFormatCTE('source_table', config);
 
             expect(sql).toContain("CONCAT('R$ '");
             expect(sql).toContain("/m³')");
@@ -75,7 +75,7 @@ describe('Format Generator', () => {
                 },
             };
 
-            const sql = FormatGenerator.generateFormatCTE('source_table', config);
+            const sql = generateFormatCTE('source_table', config);
 
             expect(sql).toContain("strftime(timestamp, '%Y-%m-%d %H:%M:%S') AS timestamp_formatted");
         });
@@ -90,7 +90,7 @@ describe('Format Generator', () => {
                 },
             };
 
-            const sql = FormatGenerator.generateFormatCTE('source_table', config);
+            const sql = generateFormatCTE('source_table', config);
 
             expect(sql).toContain('consumption');
             expect(sql).toContain('cost');
@@ -105,7 +105,7 @@ describe('Format Generator', () => {
                 },
             };
 
-            const sql = FormatGenerator.generateFormatCTE('source_table', config);
+            const sql = generateFormatCTE('source_table', config);
 
             // Brazilian format uses {:t..Nf} for thousands dot, decimal comma
             expect(sql).toContain("'{:t..2f}'");
@@ -119,7 +119,7 @@ describe('Format Generator', () => {
                 },
             };
 
-            const sql = FormatGenerator.generateFormatCTE('source_table', config);
+            const sql = generateFormatCTE('source_table', config);
 
             // US format uses {:,.Nf} for thousands comma, decimal dot
             expect(sql).toContain("'{:,.2f}'");
@@ -128,7 +128,7 @@ describe('Format Generator', () => {
 
     describe('formatValue', () => {
         it('should format value with decimal places', () => {
-            const result = FormatGenerator.formatValue('price', 'en-US', {
+            const result = formatValue('price', 'en-US', {
                 decimalPlaces: 2,
             });
             expect(result).toContain("format('{:,.2f}', price)");
@@ -136,7 +136,7 @@ describe('Format Generator', () => {
         });
 
         it('should format value with currency', () => {
-            const result = FormatGenerator.formatValue('price', 'en-US', {
+            const result = formatValue('price', 'en-US', {
                 decimalPlaces: 2,
                 currency: '$',
             });
@@ -145,7 +145,7 @@ describe('Format Generator', () => {
         });
 
         it('should format value with date', () => {
-            const result = FormatGenerator.formatValue('created_at', 'en-US', {
+            const result = formatValue('created_at', 'en-US', {
                 dateFormat: '%Y-%m-%d',
             });
             expect(result).toContain("strftime(created_at, '%Y-%m-%d')");
@@ -153,7 +153,7 @@ describe('Format Generator', () => {
         });
 
         it('should pass through unformatted columns', () => {
-            const result = FormatGenerator.formatValue('id', 'en-US', {});
+            const result = formatValue('id', 'en-US', {});
             expect(result).toBe('id');
         });
     });

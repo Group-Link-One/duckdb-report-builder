@@ -6,8 +6,8 @@
 
 import { ApplyEnrichmentTransform } from '../../../src/query-plan/query-plan';
 import {
-    generateApplyEnrichmentRawSQL, generateApplyEnrichmentSQL, generateApplyEnrichmentSQLWithColumns, getApplyEnrichmentCTEName,
-    validateApplyEnrichmentTransform
+    generateApplyEnrichmentRawSQL, generateApplyEnrichmentSQL,
+    getApplyEnrichmentCTEName, validateApplyEnrichmentTransform
 } from '../../../src/sql-generator/enrichment-generator';
 
 describe('Enrichment Generator', () => {
@@ -134,39 +134,6 @@ describe('Enrichment Generator', () => {
             expect(sql).toContain('r.daily_raw * c.multiplier AS adjusted_cost');
         });
 
-        it('should support legacy contextSourceAlias field', () => {
-            const transform = {
-                type: 'apply_enrichment' as const,
-                sourceAlias: 'readings',
-                contextSourceAlias: 'context',
-                joinOn: ['device_id'],
-                formulas: {
-                    adjusted: { formula: 'r.raw_value * c.multiplier' },
-                },
-            } as unknown as ApplyEnrichmentTransform;
-
-            const sql = generateApplyEnrichmentRawSQL(transform, 'readings_table', 'context_table');
-
-            expect(sql).toContain('FROM readings_table AS r');
-            expect(sql).toContain('LEFT JOIN context_table AS c');
-        });
-
-        it('should support legacy adjustments field', () => {
-            const transform = {
-                type: 'apply_enrichment' as const,
-                sourceAlias: 'readings',
-                lookupSourceAlias: 'context',
-                joinOn: ['device_id'],
-                adjustments: {
-                    adjusted: { formula: 'r.raw_value * c.multiplier' },
-                },
-            } as unknown as ApplyEnrichmentTransform;
-
-            const sql = generateApplyEnrichmentRawSQL(transform, 'readings_table', 'context_table');
-
-            expect(sql).toContain('r.raw_value * c.multiplier AS adjusted');
-        });
-
         it('should use explicit column selection when provided', () => {
             const transform: ApplyEnrichmentTransform = {
                 type: 'apply_enrichment',
@@ -221,27 +188,6 @@ describe('Enrichment Generator', () => {
 
             expect(sql).toContain('custom_enriched AS (');
             expect(sql).not.toContain('readings_enriched');
-        });
-    });
-
-    describe('generateApplyEnrichmentSQLWithColumns', () => {
-        it('should generate enrichment SQL with explicit columns', () => {
-            const transform: ApplyEnrichmentTransform = {
-                type: 'apply_enrichment',
-                sourceAlias: 'readings',
-                lookupSourceAlias: 'context',
-                joinOn: ['device_id'],
-                formulas: { adjusted: { formula: 'r.raw * c.m' } },
-            };
-
-            const sql = generateApplyEnrichmentSQLWithColumns(transform, 'readings_table', 'context_table', [
-                'timestamp',
-                'value',
-            ]);
-
-            expect(sql).toContain('readings_enriched AS (');
-            expect(sql).toContain('r.timestamp');
-            expect(sql).toContain('r.value');
         });
     });
 

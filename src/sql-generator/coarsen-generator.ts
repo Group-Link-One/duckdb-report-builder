@@ -150,12 +150,6 @@ export function generateCoarsenSQL(transform: CoarsenTransform, sourceTable: str
     return buildCTE(cteName, rawSQL);
 }
 
-/**
- * Get the CTE name for a coarsen transform
- *
- * @param transform - Coarsen transform specification
- * @returns CTE name
- */
 export function getCoarsenCTEName(transform: CoarsenTransform): string {
     return transform.as || `${transform.sourceAlias}_coarsened`;
 }

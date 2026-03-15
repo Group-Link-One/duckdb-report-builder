@@ -63,10 +63,11 @@ export interface PivotTransform {
 export interface LocfTransform {
     type: 'locf';
     sourceAlias: string; // Source to apply LOCF to
-    baseTimelineAlias: string; // Timeline to fill (e.g., generated 24-hour timeline)
+    baseTimelineAlias?: string; // Timeline to fill; omit for in-place LOCF
     joinKeys: string[]; // Join keys (e.g., ['device_id', 'channel'])
     columns: string[]; // Columns to carry forward
     maxLookbackSeconds: number | null; // Maximum time to look back (null = unlimited)
+    as?: string; // Optional output table rename
 }
 
 /**
@@ -153,7 +154,7 @@ export interface WindowFunctionSpec {
     function: 'LAG' | 'LEAD' | 'ROW_NUMBER' | 'RANK' | 'FIRST_VALUE' | 'LAST_VALUE' | 'ARRAY_AGG';
     column?: string; // Column to operate on (not needed for ROW_NUMBER)
     offset?: number; // Offset for LAG/LEAD (default: 1)
-    defaultValue?: any; // Default value for LAG/LEAD when no previous row
+    defaultValue?: string | number | null; // Default value for LAG/LEAD when no previous row
     outputAlias: string; // Output column name
     orderBy?: Array<{ column: string; direction: 'ASC' | 'DESC' }>; // ORDER BY for ARRAY_AGG
 }
@@ -310,17 +311,17 @@ export function validateQueryPlan(plan: QueryPlan): void {
             if (!availableAliases.has(transform.sourceAlias)) {
                 throw new Error(`Pivot transform references unknown source: ${transform.sourceAlias}`);
             }
-            // Add the pivoted alias to available aliases
-            availableAliases.add(`${transform.sourceAlias}_pivoted`);
+            const pivotAlias = transform.as || `${transform.sourceAlias}_pivoted`;
+            availableAliases.add(pivotAlias);
         } else if (isLocfTransform(transform)) {
             if (!availableAliases.has(transform.sourceAlias)) {
                 throw new Error(`LOCF transform references unknown source: ${transform.sourceAlias}`);
             }
-            if (!availableAliases.has(transform.baseTimelineAlias)) {
+            if (transform.baseTimelineAlias && !availableAliases.has(transform.baseTimelineAlias)) {
                 throw new Error(`LOCF transform references unknown timeline source: ${transform.baseTimelineAlias}`);
             }
-            // Add the LOCF alias to available aliases
-            availableAliases.add(`${transform.sourceAlias}_locf`);
+            const locfAlias = transform.as || `${transform.sourceAlias}_locf`;
+            availableAliases.add(locfAlias);
         } else if (isCoarsenTransform(transform)) {
             if (!availableAliases.has(transform.sourceAlias)) {
                 throw new Error(`Coarsen transform references unknown source: ${transform.sourceAlias}`);
@@ -332,9 +333,8 @@ export function validateQueryPlan(plan: QueryPlan): void {
             if (!availableAliases.has(transform.sourceAlias)) {
                 throw new Error(`ApplyEnrichment transform references unknown source: ${transform.sourceAlias}`);
             }
-            const lookupAlias = (transform as any).lookupSourceAlias || (transform as any).contextSourceAlias;
-            if (!availableAliases.has(lookupAlias)) {
-                throw new Error(`ApplyEnrichment transform references unknown lookup source: ${lookupAlias}`);
+            if (!availableAliases.has(transform.lookupSourceAlias)) {
+                throw new Error(`ApplyEnrichment transform references unknown lookup source: ${transform.lookupSourceAlias}`);
             }
             // Add the enriched alias (either custom 'as' or default '_enriched')
             const enrichedAlias = transform.as || `${transform.sourceAlias}_enriched`;

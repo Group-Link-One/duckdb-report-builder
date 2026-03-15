@@ -140,7 +140,6 @@ function generateWindowFunction(
 
         case 'ARRAY_AGG': {
             const column = quoteIdentifier(func.column!);
-            // ARRAY_AGG collects values into an array
             windowExpr = `ARRAY_AGG(${column}) OVER (PARTITION BY ${partitionClause} ORDER BY ${orderByClause})`;
             break;
         }
@@ -198,12 +197,6 @@ export function generateWindowSQL(transform: WindowTransform, sourceTable: strin
     return buildCTE(cteName, rawSQL);
 }
 
-/**
- * Get the CTE name for a window transform
- *
- * @param transform - Window transform specification
- * @returns CTE name
- */
 export function getWindowCTEName(transform: WindowTransform): string {
     return transform.as || `${transform.sourceAlias}_windowed`;
 }
@@ -221,7 +214,7 @@ export function createLagFunction(
     column: string,
     outputAlias: string,
     offset: number = 1,
-    defaultValue: any = 0
+    defaultValue: string | number | null = 0
 ): WindowFunctionSpec {
     return {
         function: 'LAG',

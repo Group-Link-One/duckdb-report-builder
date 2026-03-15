@@ -37,8 +37,8 @@ export interface StepInfo {
  * Execution options for building reports
  */
 export interface ExecutionOptions {
-    /** Strategy to use: CTE (single query) or temp tables (step-by-step) */
-    strategy: ExecutionStrategy;
+    /** Strategy to use: CTE (single query) or temp tables (step-by-step). Defaults to 'cte'. */
+    strategy?: ExecutionStrategy;
 
     /**
      * Callback that fires IN BETWEEN each step (not after all!)

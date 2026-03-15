@@ -16,7 +16,6 @@ export class DuckDBQueryExecutor {
      */
     async init(path: string = ':memory:', options?: Record<string, string>): Promise<void> {
         if (this.instance) {
-            console.warn('DuckDB instance already initialized');
             return;
         }
 
@@ -42,10 +41,7 @@ export class DuckDBQueryExecutor {
         const connection = this.getConnection();
         const result = await connection.run(query);
 
-        // Get column names from the result
         const columnNames = Array.from({ length: result.columnCount }, (_, i) => result.columnName(i));
-
-        // Iterate through all chunks and collect rows
         const allRows: any[] = [];
         for (let chunkIndex = 0; chunkIndex < result.chunkCount; chunkIndex++) {
             const chunk = result.getChunk(chunkIndex);

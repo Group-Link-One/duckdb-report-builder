@@ -69,18 +69,8 @@ export function generateFromClauseWithJoins(
     return fromClause;
 }
 
-/**
- * Build a JOIN tree from multiple join transforms
- *
- * This function analyzes join dependencies and builds an optimal join order.
- * For now, it uses a simple left-to-right approach.
- *
- * @param joins - Array of join transforms
- * @returns Ordered array of joins
- */
+/** Returns joins in declaration order. */
 export function buildJoinTree(joins: JoinTransform[]): JoinTransform[] {
-    // For now, return joins as-is
-    // In the future, this could optimize join order based on selectivity
     return joins;
 }
 
@@ -109,8 +99,6 @@ export function validateJoins(joins: JoinTransform[], availableTables: Set<strin
         }
     }
 
-    // Check for circular dependencies
-    // Build adjacency list
     const adjacency = new Map<string, Set<string>>();
     for (const join of joins) {
         if (!adjacency.has(join.leftAlias)) {
@@ -119,7 +107,6 @@ export function validateJoins(joins: JoinTransform[], availableTables: Set<strin
         adjacency.get(join.leftAlias)!.add(join.rightAlias);
     }
 
-    // DFS to detect cycles
     const visited = new Set<string>();
     const recursionStack = new Set<string>();
 

@@ -95,30 +95,6 @@ export function generateTimezoneSQL(transform: TimezoneTransform, sourceTable: s
     return buildCTE(cteName, rawSQL);
 }
 
-/**
- * Generate SQL with explicit column selection (wrapped in CTE)
- *
- * @param transform - Timezone transform specification
- * @param sourceTable - Source table or CTE name
- * @param selectColumns - Columns to select (non-timestamp columns)
- * @returns CTE SQL for the timezone-converted result
- */
-export function generateTimezoneSQLWithColumns(
-    transform: TimezoneTransform,
-    sourceTable: string,
-    selectColumns: string[]
-): string {
-    const cteName = transform.as || `${transform.sourceAlias}_tz`;
-    const rawSQL = generateTimezoneRawSQL(transform, sourceTable, selectColumns);
-    return buildCTE(cteName, rawSQL);
-}
-
-/**
- * Get the CTE name for a timezone transform
- *
- * @param transform - Timezone transform specification
- * @returns CTE name
- */
 export function getTimezoneCTEName(transform: TimezoneTransform): string {
     return transform.as || `${transform.sourceAlias}_tz`;
 }

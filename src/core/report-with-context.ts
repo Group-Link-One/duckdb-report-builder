@@ -5,23 +5,20 @@
  *
  * Example usage:
  * ```typescript
- * const report = new ReportWithContext([100n, 200n, 300n])
- *     .period(new Date('2024-01-01'), new Date('2024-01-31'), 'UTC')
- *     .sources([
- *         { provider: new ClickHouseProvider(readings), alias: 'readings' },
- *         { provider: new DeviceContextProvider(contexts), alias: 'dc' }
- *     ])
+ * const report = new ReportWithContext()
+ *     .context({ from: new Date('2024-01-01'), until: new Date('2024-01-31') }, 'UTC')
+ *     .load('readings', readingsProvider)
+ *     .load('dc', deviceContextProvider)
  *     .pivot('readings', {
  *         on: 'serie_id',
  *         val: 'raw_value',
  *         cols: [
  *             { id: 2, alias: 'energy_in' },
  *             { id: 3, alias: 'energy_out' },
- *             { id: 12, alias: 'serial_number', locf: 300 }
  *         ]
  *     })
  *     .join('readings', 'dc', { device_id: 'device_id', channel: 'channel' })
- *     .select(['timestamp', 'dc.device_id', 'dc.device_name', 'energy_in', 'energy_out', 'serial_number'])
+ *     .select(['timestamp', 'dc.device_id', 'energy_in', 'energy_out'])
  *     .filter('energy_in IS NOT NULL');
  *
  * const result = await report.build<EnergyReportRow>();
@@ -32,7 +29,7 @@ import { IDataSourceProvider, LoadContext } from '../providers/i-data-source-pro
 import {
     AggregationStrategy, ApplyEnrichmentTransform, CoarsenTransform, EnrichmentFormula, FilterSpec, JoinTransform, LocfTransform, OutputColumn, PivotTransform, PlanContext, QueryPlan, SourceSpec, TimeGranularity, TimezoneTransform, TransformSpec, validateQueryPlan, WindowFunctionSpec, WindowTransform
 } from '../query-plan/query-plan';
-import { FormatConfig, FormatGenerator } from '../sql-generator/format-generator';
+import { FormatConfig, generateFormatCTE } from '../sql-generator/format-generator';
 import { SQLGenerator } from '../sql-generator/sql-generator';
 import { DuckDBQueryExecutor } from './duckdb-query-executor';
 import { ExecutionOptions, StepInfo } from './execution-strategy';
@@ -56,10 +53,11 @@ export interface PivotConfig {
  * LOCF configuration for fluent API
  */
 export interface LocfConfig {
-    baseTimeline: string; // Timeline source alias
+    baseTimeline?: string; // Timeline source alias; omit for in-place LOCF
     joinKeys: string[]; // Join keys (e.g., ['device_id', 'channel'])
     columns: string[]; // Columns to carry forward
     maxLookbackSeconds?: number | null;
+    as?: string; // Optional output table rename
 }
 
 /**
@@ -254,6 +252,7 @@ export class ReportWithContext {
             joinKeys: config.joinKeys,
             columns: config.columns,
             maxLookbackSeconds: config.maxLookbackSeconds ?? null,
+            as: config.as,
         };
         this.transforms.push(locfTransform);
         return this;
@@ -530,49 +529,11 @@ export class ReportWithContext {
     async build<T = any>(options?: ExecutionOptions): Promise<ReportResult<T>> {
         const startTime = Date.now();
         const strategy = options?.strategy || 'cte';
-
-        // Validate context
-        if (!this.planContext) {
-            throw new Error('Context must be set before building report (use .context() or .period())');
-        }
-
-        // Build query plan
-        const plan: QueryPlan = {
-            context: this.planContext,
-            sources: this.sources,
-            transforms: this.transforms,
-            output: {
-                columns: this.outputColumns,
-                filters: this.outputFilters.length > 0 ? this.outputFilters : undefined,
-                orderBy: this.outputOrderBy.length > 0 ? this.outputOrderBy : undefined,
-                groupBy: this.outputGroupBy.length > 0 ? this.outputGroupBy : undefined,
-            },
-        };
-
-        // Validate plan
-        validateQueryPlan(plan);
-
-        // Initialize DuckDB
-        await this.executor.init();
-
-        // Load all sources sequentially, building up the LoadContext
-        const sourceTableMap = new Map<string, string>();
-        for (const source of this.sources) {
-            const loadContext: LoadContext = {
-                connection: this.executor.getConnection(),
-                period: this.planContext.period,
-                timezone: this.planContext.timezone,
-                params: this.planContext.params,
-                tables: new Map(sourceTableMap), // Pass copy of accumulated tables
-            };
-            const tableName = await source.provider.load(loadContext);
-            sourceTableMap.set(source.alias, tableName);
-        }
+        const { plan, sourceTableMap } = await this.preparePlan();
 
         let data: any[];
         let sql: string;
 
-        // Execute based on strategy
         if (strategy === 'temp_tables') {
             const result = await this.executeTempTableMode(plan, sourceTableMap, options);
             data = result.data;
@@ -590,7 +551,7 @@ export class ReportWithContext {
                 await this.executor.getConnection().run(`CREATE TEMP TABLE ${mainResultTable} AS ${sql}`);
 
                 // Generate formatting SQL
-                const formatSQL = FormatGenerator.generateFormatCTE(mainResultTable, this.formatConfig);
+                const formatSQL = generateFormatCTE(mainResultTable, this.formatConfig);
                 data = await this.executor.runQuery(formatSQL);
 
                 // Cleanup
@@ -610,6 +571,42 @@ export class ReportWithContext {
             sql,
             executionTimeMs,
         };
+    }
+
+    private async preparePlan(): Promise<{ plan: QueryPlan; sourceTableMap: Map<string, string> }> {
+        if (!this.planContext) {
+            throw new Error('Context must be set before building report (use .context() or .period())');
+        }
+
+        const plan: QueryPlan = {
+            context: this.planContext,
+            sources: this.sources,
+            transforms: this.transforms,
+            output: {
+                columns: this.outputColumns,
+                filters: this.outputFilters.length > 0 ? this.outputFilters : undefined,
+                orderBy: this.outputOrderBy.length > 0 ? this.outputOrderBy : undefined,
+                groupBy: this.outputGroupBy.length > 0 ? this.outputGroupBy : undefined,
+            },
+        };
+
+        validateQueryPlan(plan);
+        await this.executor.init();
+
+        const sourceTableMap = new Map<string, string>();
+        for (const source of this.sources) {
+            const loadContext: LoadContext = {
+                connection: this.executor.getConnection(),
+                period: this.planContext.period,
+                timezone: this.planContext.timezone,
+                params: this.planContext.params,
+                tables: new Map(sourceTableMap),
+            };
+            const tableName = await source.provider.load(loadContext);
+            sourceTableMap.set(source.alias, tableName);
+        }
+
+        return { plan, sourceTableMap };
     }
 
     /**
@@ -706,7 +703,7 @@ export class ReportWithContext {
                 executedSQL.push(createFormattedSQL);
 
                 // Generate and execute formatting SQL
-                const formatSQL = FormatGenerator.generateFormatCTE(formattedResultTable, this.formatConfig);
+                const formatSQL = generateFormatCTE(formattedResultTable, this.formatConfig);
                 executedSQL.push(formatSQL);
                 data = await this.executor.runQuery(formatSQL);
 
@@ -726,9 +723,8 @@ export class ReportWithContext {
                 for (const tableName of tempTablePlan.tempTables) {
                     try {
                         await connection.run(`DROP TABLE IF EXISTS ${tableName}`);
-                    } catch (err) {
+                    } catch {
                         // Ignore cleanup errors
-                        console.warn(`Failed to cleanup temp table ${tableName}:`, err);
                     }
                 }
             }
@@ -741,48 +737,9 @@ export class ReportWithContext {
      * @returns Generated SQL string
      */
     async toSQL(): Promise<string> {
-        // Validate context
-        if (!this.planContext) {
-            throw new Error('Context must be set before generating SQL (use .context() or .period())');
-        }
-
-        // Build query plan
-        const plan: QueryPlan = {
-            context: this.planContext,
-            sources: this.sources,
-            transforms: this.transforms,
-            output: {
-                columns: this.outputColumns,
-                filters: this.outputFilters.length > 0 ? this.outputFilters : undefined,
-                orderBy: this.outputOrderBy.length > 0 ? this.outputOrderBy : undefined,
-                groupBy: this.outputGroupBy.length > 0 ? this.outputGroupBy : undefined,
-            },
-        };
-
-        // Validate plan
-        validateQueryPlan(plan);
-
-        // Initialize DuckDB (needed to load sources)
-        await this.executor.init();
-
-        // Load all sources sequentially, building up the LoadContext
-        const sourceTableMap = new Map<string, string>();
-        for (const source of this.sources) {
-            const loadContext: LoadContext = {
-                connection: this.executor.getConnection(),
-                period: this.planContext.period,
-                timezone: this.planContext.timezone,
-                params: this.planContext.params,
-                tables: new Map(sourceTableMap), // Pass copy of accumulated tables
-            };
-            const tableName = await source.provider.load(loadContext);
-            sourceTableMap.set(source.alias, tableName);
-        }
-
-        // Generate SQL
+        const { plan, sourceTableMap } = await this.preparePlan();
         const generator = new SQLGenerator({ formatted: true });
         const { sql } = generator.generate(plan, sourceTableMap);
-
         return sql;
     }
 
@@ -845,9 +802,9 @@ export class ReportWithContext {
     private getTransformOutputAlias(transform: TransformSpec): string {
         switch (transform.type) {
             case 'pivot':
-                return `${transform.sourceAlias}_pivoted`;
+                return transform.as || `${transform.sourceAlias}_pivoted`;
             case 'locf':
-                return `${transform.sourceAlias}_locf`;
+                return transform.as || `${transform.sourceAlias}_locf`;
             case 'coarsen':
                 return transform.as || `${transform.sourceAlias}_coarsened`;
             case 'apply_enrichment':
