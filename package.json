@@ -1,7 +1,7 @@
 {
     "name": "duckdb-report-builder",
     "version": "0.1.1",
-    "description": "A SQL-first report builder using DuckDB for data transformation and orchestration",
+    "description": "A SQL-first report builder using DuckDB for data transformation and orchestration. Pre-1.0.0: breaking changes may occur in 0.X.0 bumps.",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
     "license": "MIT",

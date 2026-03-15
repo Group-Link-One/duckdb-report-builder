@@ -11,6 +11,8 @@ A SQL-first report builder using DuckDB for data transformation and orchestratio
 - **Flexible execution**: CTE mode (single query) or temp table mode (step-by-step with callbacks)
 - **Type-safe**: Full TypeScript support with comprehensive type definitions
 
+> **Note:** This library is in early development (pre-1.0.0). Breaking changes may occur in minor version bumps (0.X.0). Pin your dependency to a specific version until 1.0.0 is released.
+
 ## Installation
 
 ```bash
