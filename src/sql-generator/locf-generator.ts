@@ -30,8 +30,9 @@ function buildLocfExpression(
         ? `\n                AND prev.timestamp >= ${rowAlias}.timestamp - INTERVAL '${maxLookbackSeconds} seconds'`
         : '';
 
+    const firstArg = rowAlias === 'base' ? `source.${quotedCol}` : `${rowAlias}.${quotedCol}`;
     return `COALESCE(
-        ${rowAlias === 'source' ? `source.${quotedCol}` : quotedCol},
+        ${firstArg},
         (
             SELECT ${quotedCol}
             FROM ${quoteIdentifier(sourceTable)} prev

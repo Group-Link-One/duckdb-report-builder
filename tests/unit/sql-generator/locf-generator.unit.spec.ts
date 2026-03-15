@@ -63,6 +63,13 @@ describe('LOCF Generator', () => {
             expect(sql).toContain('AS firmware_version');
         });
 
+        it('should qualify COALESCE first argument with source alias', () => {
+            const sql = generateLocfRawSQL(baseTransform, 'readings', 'timeline');
+
+            expect(sql).toContain('COALESCE(\n        source.serial_number,');
+            expect(sql).not.toMatch(/COALESCE\(\s*serial_number,/);
+        });
+
         it('should wrap in CTE', () => {
             const sql = generateLocfSQL(baseTransform, 'readings', 'timeline');
 
@@ -100,6 +107,13 @@ describe('LOCF Generator', () => {
             const sql = generateLocfRawSQL(transform, 'readings');
 
             expect(sql).toContain("INTERVAL '600 seconds'");
+        });
+
+        it('should qualify COALESCE first argument with curr alias', () => {
+            const sql = generateLocfRawSQL(baseTransform, 'readings');
+
+            expect(sql).toContain('COALESCE(\n        curr.serial_number,');
+            expect(sql).not.toContain('source.serial_number');
         });
 
         it('should reference curr alias in correlated subquery', () => {
