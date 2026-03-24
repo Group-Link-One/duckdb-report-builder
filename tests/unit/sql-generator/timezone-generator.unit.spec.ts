@@ -90,7 +90,7 @@ describe('Timezone Generator', () => {
             const sql = generateTimezoneRawSQL(transform, 'source_table');
 
             expect(sql).toContain('SELECT');
-            expect(sql).toContain("(timestamp AT TIME ZONE 'America/Sao_Paulo') AS timestamp");
+            expect(sql).toContain("(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS timestamp");
             expect(sql).toContain('FROM source_table');
         });
 
@@ -104,9 +104,9 @@ describe('Timezone Generator', () => {
 
             const sql = generateTimezoneRawSQL(transform, 'source_table');
 
-            expect(sql).toContain("(timestamp AT TIME ZONE 'America/Sao_Paulo') AS timestamp");
-            expect(sql).toContain("(created_at AT TIME ZONE 'America/Sao_Paulo') AS created_at");
-            expect(sql).toContain("(updated_at AT TIME ZONE 'America/Sao_Paulo') AS updated_at");
+            expect(sql).toContain("(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS timestamp");
+            expect(sql).toContain("(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS created_at");
+            expect(sql).toContain("(updated_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS updated_at");
         });
 
         it('should include all columns when no explicit columns specified', () => {
@@ -119,8 +119,8 @@ describe('Timezone Generator', () => {
 
             const sql = generateTimezoneRawSQL(transform, 'source_table');
 
-            expect(sql).toContain('*');
-            expect(sql).toContain("(timestamp AT TIME ZONE 'America/Sao_Paulo') AS timestamp");
+            expect(sql).toContain('* EXCLUDE (timestamp)');
+            expect(sql).toContain("(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS timestamp");
         });
 
         it('should use explicit column selection when provided', () => {
@@ -135,7 +135,7 @@ describe('Timezone Generator', () => {
 
             expect(sql).toContain('id');
             expect(sql).toContain('value');
-            expect(sql).toContain("(timestamp AT TIME ZONE 'America/Sao_Paulo') AS timestamp");
+            expect(sql).toContain("(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS timestamp");
             expect(sql).not.toContain('*');
         });
 
@@ -215,12 +215,12 @@ describe('Timezone Generator', () => {
     describe('generateTimezoneExpression', () => {
         it('should generate timezone conversion expression', () => {
             const result = generateTimezoneExpression('timestamp', 'America/Sao_Paulo');
-            expect(result).toBe("(timestamp AT TIME ZONE 'America/Sao_Paulo')");
+            expect(result).toBe("(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')");
         });
 
         it('should quote column names that need it', () => {
             const result = generateTimezoneExpression('1timestamp', 'America/Sao_Paulo');
-            expect(result).toBe('("1timestamp" AT TIME ZONE \'America/Sao_Paulo\')');
+            expect(result).toBe('("1timestamp" AT TIME ZONE \'UTC\' AT TIME ZONE \'America/Sao_Paulo\')');
         });
     });
 });

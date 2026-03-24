@@ -59,7 +59,12 @@ export function generateTimezoneRawSQL(
     // Build timezone conversion for each timestamp column
     const conversions = transform.timestampColumns.map((col) => {
         const quotedCol = quoteIdentifier(col);
-        return `(${quotedCol} AT TIME ZONE '${transform.timezone}') AS ${quotedCol}`;
+        // Two-step conversion: first mark the bare TIMESTAMP as UTC,
+        // then convert from UTC to target timezone.
+        // DuckDB semantics: TIMESTAMP AT TIME ZONE 'X' *interprets* as X (wrong direction).
+        // TIMESTAMP AT TIME ZONE 'UTC' → TIMESTAMPTZ in UTC
+        // TIMESTAMPTZ AT TIME ZONE 'target' → TIMESTAMP in target tz
+        return `(${quotedCol} AT TIME ZONE 'UTC' AT TIME ZONE '${transform.timezone}') AS ${quotedCol}`;
     });
 
     // Handle column selection
@@ -72,7 +77,11 @@ export function generateTimezoneRawSQL(
         const allColumns = [...nonTimestampColumns, ...conversions];
         selectClause = allColumns.join(',\n    ');
     } else {
-        selectClause = `*,\n    ${conversions.join(',\n    ')}`;
+        // Use EXCLUDE to remove original timestamp columns before adding converted versions.
+        // Without EXCLUDE, SELECT * would include both the original and converted columns
+        // with the same name, and DuckDB resolves ambiguous references to the first match (the original).
+        const excludeList = transform.timestampColumns.map(quoteIdentifier).join(', ');
+        selectClause = `* EXCLUDE (${excludeList}),\n    ${conversions.join(',\n    ')}`;
     }
 
     return `
@@ -108,5 +117,5 @@ export function getTimezoneCTEName(transform: TimezoneTransform): string {
  */
 export function generateTimezoneExpression(columnName: string, timezone: string): string {
     const quotedCol = quoteIdentifier(columnName);
-    return `(${quotedCol} AT TIME ZONE '${timezone}')`;
+    return `(${quotedCol} AT TIME ZONE 'UTC' AT TIME ZONE '${timezone}')`;
 }
