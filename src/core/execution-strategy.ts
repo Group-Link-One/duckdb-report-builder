@@ -104,11 +104,14 @@ export function composeCallbacks(
 
 /**
  * Create a progress logging callback
+ *
+ * @param reportName - Label for the report
+ * @param log - Custom log function (defaults to console.log)
  */
-export function createProgressCallback(reportName: string) {
+export function createProgressCallback(reportName: string, log: (msg: string) => void = console.log) {
     return async (info: StepInfo, _conn: DuckDBConnection) => {
         const progress = Math.round(((info.stepNumber + 1) / info.totalSteps) * 100);
-        console.log(`[${reportName}] ${progress}% - ${info.name} (${info.tableName})`);
+        log(`[${reportName}] ${progress}% - ${info.name} (${info.tableName})`);
     };
 }
 
@@ -145,27 +148,32 @@ export function createNullValidationCallback(
 
 /**
  * Create a row count logging callback
+ *
+ * @param log - Custom log function (defaults to console.log)
  */
-export function createRowCountCallback() {
+export function createRowCountCallback(log: (msg: string) => void = console.log) {
     return async (info: StepInfo, conn: DuckDBConnection) => {
         const result = await conn.run(`SELECT COUNT(*) as row_count FROM ${info.tableName}`);
         const columnNames = Array.from({ length: result.columnCount }, (_, i) => result.columnName(i));
         const chunk = result.getChunk(0);
         const rows = chunk.getRowObjects(columnNames);
         const rowCount = Number(rows[0]?.row_count ?? 0);
-        console.log(`[${info.name}] Row count: ${rowCount.toLocaleString()}`);
+        log(`[${info.name}] Row count: ${rowCount.toLocaleString()}`);
     };
 }
 
 /**
  * Create a sample data logging callback (useful for debugging)
+ *
+ * @param limit - Number of sample rows to display
+ * @param log - Custom log function (defaults to console.log)
  */
-export function createSampleDataCallback(limit: number = 3) {
+export function createSampleDataCallback(limit: number = 3, log: (msg: string, ...args: any[]) => void = console.log) {
     return async (info: StepInfo, conn: DuckDBConnection) => {
         const result = await conn.run(`SELECT * FROM ${info.tableName} LIMIT ${limit}`);
         const columnNames = Array.from({ length: result.columnCount }, (_, i) => result.columnName(i));
         const chunk = result.getChunk(0);
         const rows = chunk.getRowObjects(columnNames);
-        console.log(`[${info.name}] Sample data (${limit} rows):`, rows);
+        log(`[${info.name}] Sample data (${limit} rows):`, rows);
     };
 }

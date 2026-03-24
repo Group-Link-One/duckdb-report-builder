@@ -9,6 +9,7 @@
  */
 
 import { DuckDBConnection } from '@duckdb/node-api';
+import { ReportLogger } from '../core/logger';
 
 /**
  * Column type definitions
@@ -42,6 +43,8 @@ export interface LoadContext {
     params: Record<string, any>;
     /** Map of previously loaded source aliases to their DuckDB table names */
     tables: Map<string, string>;
+    /** Optional logger for provider-level observability */
+    logger?: ReportLogger;
 }
 
 /**

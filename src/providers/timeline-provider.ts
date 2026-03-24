@@ -150,16 +150,19 @@ export class TimelineProvider extends BaseDataSourceProvider {
             `);
         }
 
-        // Count rows for logging
-        const countResult = await connection.run(`SELECT COUNT(*) as count FROM ${tableName}`);
-        const columnNames = Array.from({ length: countResult.columnCount }, (_, i) => countResult.columnName(i));
-        const chunk = countResult.getChunk(0);
-        const rows = chunk.getRowObjects(columnNames);
-        const count = rows[0]?.count || 0;
-
-        console.log(
-            `[TimelineProvider] Generated ${count} timeline entries at ${this.granularity} granularity in ${tableName}`
-        );
+        // Emit provider event via logger (if available)
+        if (context.logger?.onProviderEvent) {
+            const countResult = await connection.run(`SELECT COUNT(*) as count FROM ${tableName}`);
+            const columnNames = Array.from({ length: countResult.columnCount }, (_, i) => countResult.columnName(i));
+            const chunk = countResult.getChunk(0);
+            const rows = chunk.getRowObjects(columnNames);
+            const count = rows[0]?.count || 0;
+            context.logger.onProviderEvent({
+                provider: this.name,
+                tableName,
+                message: `Generated ${count} entries at ${this.granularity} granularity`,
+            });
+        }
 
         return tableName;
     }

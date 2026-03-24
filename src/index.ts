@@ -12,6 +12,11 @@ export {
     type ExecutionStrategy,
     type StepInfo
 } from './core/execution-strategy';
+export {
+    consoleLogger, silentLogger,
+    type ReportLogger,
+    type InitEvent, type SourceLoadEvent, type BuildCompleteEvent, type ProviderEvent,
+} from './core/logger';
 export { ReportWithContext, type ReportResult } from './core/report-with-context';
 // Fluent API Configuration Types
 export type {

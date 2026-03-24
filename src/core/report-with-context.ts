@@ -33,6 +33,7 @@ import { FormatConfig, generateFormatCTE } from '../sql-generator/format-generat
 import { SQLGenerator } from '../sql-generator/sql-generator';
 import { DuckDBQueryExecutor } from './duckdb-query-executor';
 import { ExecutionOptions, StepInfo } from './execution-strategy';
+import { ReportLogger, silentLogger } from './logger';
 
 /**
  * Pivot configuration for fluent API
@@ -124,9 +125,35 @@ export class ReportWithContext {
     private outputGroupBy: string[] = [];
     private formatConfig?: FormatConfig;
     private executor: DuckDBQueryExecutor;
+    private _logger: ReportLogger = silentLogger;
 
     constructor() {
         this.executor = new DuckDBQueryExecutor();
+    }
+
+    /**
+     * Set a logger for observability (timing, source loads, build completion).
+     * Default is silent (no-op). Use `consoleLogger()` for console output.
+     *
+     * @example
+     * ```typescript
+     * import { consoleLogger } from 'duckdb-report-builder';
+     *
+     * new ReportWithContext()
+     *     .logger(consoleLogger())
+     *     .context({ ... })
+     *     .load('readings', provider)
+     *     .build();
+     * ```
+     */
+    logger(logger: ReportLogger): this {
+        this._logger = logger;
+        return this;
+    }
+
+    /** Access the current logger (for providers that need it). */
+    getLogger(): ReportLogger {
+        return this._logger;
     }
 
     /**
@@ -530,10 +557,12 @@ export class ReportWithContext {
         const startTime = Date.now();
         const strategy = options?.strategy || 'cte';
         const { plan, sourceTableMap } = await this.preparePlan();
+        const prepareMs = Date.now() - startTime;
 
         let data: any[];
         let sql: string;
 
+        const tExec = Date.now();
         if (strategy === 'temp_tables') {
             const result = await this.executeTempTableMode(plan, sourceTableMap, options);
             data = result.data;
@@ -563,8 +592,16 @@ export class ReportWithContext {
                 data = await this.executor.runQuery(sql);
             }
         }
+        const execMs = Date.now() - tExec;
 
         const executionTimeMs = Date.now() - startTime;
+        this._logger.onBuildComplete?.({
+            prepareMs,
+            executeMs: execMs,
+            totalMs: executionTimeMs,
+            rows: data.length,
+            strategy,
+        });
 
         return {
             data: data as T[],
@@ -591,9 +628,14 @@ export class ReportWithContext {
         };
 
         validateQueryPlan(plan);
+
+        const t0 = Date.now();
         await this.executor.init();
+        const initMs = Date.now() - t0;
 
         const sourceTableMap = new Map<string, string>();
+        const timings: Array<{ alias: string; provider: string; ms: number }> = [];
+
         for (const source of this.sources) {
             const loadContext: LoadContext = {
                 connection: this.executor.getConnection(),
@@ -601,9 +643,19 @@ export class ReportWithContext {
                 timezone: this.planContext.timezone,
                 params: this.planContext.params,
                 tables: new Map(sourceTableMap),
+                logger: this._logger,
             };
+            const tSrc = Date.now();
             const tableName = await source.provider.load(loadContext);
+            const srcMs = Date.now() - tSrc;
+            timings.push({ alias: source.alias, provider: source.provider.name ?? source.provider.constructor.name, ms: srcMs });
             sourceTableMap.set(source.alias, tableName);
+        }
+
+        // Emit lifecycle events
+        this._logger.onInit?.({ durationMs: initMs });
+        for (const t of timings) {
+            this._logger.onSourceLoad?.({ alias: t.alias, provider: t.provider, durationMs: t.ms });
         }
 
         return { plan, sourceTableMap };
