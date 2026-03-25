@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.2.1] - 2026-03-25
+
+### Added
+- **Pluggable logger system**: New `ReportLogger` interface with lifecycle events (`onInit`,
+  `onSourceLoad`, `onBuildComplete`, `onProviderEvent`). Ships with `silentLogger()` (default)
+  and `consoleLogger()`. Integrate with any metrics/tracing/structured-logging backend by
+  implementing only the events you care about.
+- **Execution profiling**: Opt-in `profiling: true` in `ExecutionOptions` collects DuckDB memory
+  snapshots (`duckdb_memory()`), per-step timing, and row counts during report execution.
+  - **CTE mode**: captures memory before/after + `EXPLAIN ANALYZE` output for per-operator stats.
+  - **temp_tables mode**: captures per-step memory deltas, duration, and row counts between each
+    `CREATE TEMP TABLE`.
+  - Results emitted via `onProfileComplete` logger event and returned in `ReportResult.profile`.
+  - New `createProfilingCallback()` factory for manual profiling in temp_tables mode.
+  - New types: `ProfileResult`, `StepProfile`, `CTEQueryProfile`, `MemorySnapshot`,
+    `ProfileCompleteEvent`.
+  - New helpers: `queryMemorySnapshot()`, `sumMemoryBytes()`.
+
+### Fixed
+- **Timezone conversion direction**: SQL generation now applies a two-step conversion
+  (`AT TIME ZONE 'UTC' AT TIME ZONE '<target>'`) instead of a single step, fixing incorrect
+  offset direction in DuckDB. Includes `EXCLUDE` to avoid duplicate columns in the SELECT.
+
 ## [0.2.0] - 2026-03-15
 
 ### Added
