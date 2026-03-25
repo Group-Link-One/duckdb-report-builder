@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2] - 2026-03-25
+
+### Added
+- **DuckDB configuration**: New `.duckdb({ path, settings })` fluent method to configure the
+  DuckDB instance before execution. Supports `path` (file-based DB for disk spill), `threads`,
+  `memory_limit`, `temp_directory`, and any other DuckDB setting. Defaults to in-memory.
+
 ## [0.2.1] - 2026-03-25
 
 ### Added

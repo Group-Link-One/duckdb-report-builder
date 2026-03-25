@@ -121,6 +121,28 @@ export interface ReportResult<T = any> {
 /**
  * ReportWithContext - Fluent API builder
  */
+export interface DuckDBConfig {
+    /** Database path. Defaults to ':memory:'. Use a file path for disk-based spill. */
+    path?: string;
+    /**
+     * DuckDB configuration options passed to DuckDBInstance.create().
+     * Common keys: threads, memory_limit, temp_directory, max_memory, etc.
+     *
+     * @example
+     * ```typescript
+     * .duckdb({
+     *     path: '/tmp/report.duckdb',
+     *     settings: {
+     *         threads: '2',
+     *         memory_limit: '500MB',
+     *         temp_directory: '/tmp/duck.spill',
+     *     },
+     * })
+     * ```
+     */
+    settings?: Record<string, string>;
+}
+
 export class ReportWithContext {
     private planContext?: PlanContext;
     private sources: SourceSpec[] = [];
@@ -132,6 +154,7 @@ export class ReportWithContext {
     private formatConfig?: FormatConfig;
     private executor: DuckDBQueryExecutor;
     private _logger: ReportLogger = silentLogger;
+    private _duckdbConfig: DuckDBConfig = {};
 
     constructor() {
         this.executor = new DuckDBQueryExecutor();
@@ -160,6 +183,30 @@ export class ReportWithContext {
     /** Access the current logger (for providers that need it). */
     getLogger(): ReportLogger {
         return this._logger;
+    }
+
+    /**
+     * Configure DuckDB instance settings (path, memory, threads, spill, etc.).
+     * Must be called before `.build()`.
+     *
+     * @example
+     * ```typescript
+     * new ReportWithContext()
+     *     .duckdb({
+     *         path: '/tmp/report.duckdb',
+     *         settings: {
+     *             threads: '4',
+     *             memory_limit: '1GB',
+     *             temp_directory: '/tmp/duck.spill',
+     *         },
+     *     })
+     *     .context({ ... })
+     *     .build();
+     * ```
+     */
+    duckdb(config: DuckDBConfig): this {
+        this._duckdbConfig = config;
+        return this;
     }
 
     /**
@@ -671,7 +718,7 @@ export class ReportWithContext {
         validateQueryPlan(plan);
 
         const t0 = Date.now();
-        await this.executor.init();
+        await this.executor.init(this._duckdbConfig.path, this._duckdbConfig.settings);
         const initMs = Date.now() - t0;
 
         const sourceTableMap = new Map<string, string>();

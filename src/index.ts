@@ -22,7 +22,7 @@ export {
     createProfilingCallback, queryMemorySnapshot, sumMemoryBytes,
     type CTEQueryProfile, type MemorySnapshot, type ProfileResult, type StepProfile,
 } from './core/profiling';
-export { ReportWithContext, type ReportResult } from './core/report-with-context';
+export { ReportWithContext, type ReportResult, type DuckDBConfig } from './core/report-with-context';
 // Fluent API Configuration Types
 export type {
     ApplyEnrichmentConfig, CoarsenConfig, LocfConfig, PivotConfig, TimezoneConfig,
