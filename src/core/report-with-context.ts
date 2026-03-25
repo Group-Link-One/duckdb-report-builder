@@ -34,6 +34,10 @@ import { SQLGenerator } from '../sql-generator/sql-generator';
 import { DuckDBQueryExecutor } from './duckdb-query-executor';
 import { ExecutionOptions, StepInfo } from './execution-strategy';
 import { ReportLogger, silentLogger } from './logger';
+import {
+    ProfileResult, queryMemorySnapshot, queryRowCount, runExplainAnalyze, sumMemoryBytes,
+    StepProfile,
+} from './profiling';
 
 /**
  * Pivot configuration for fluent API
@@ -110,6 +114,8 @@ export interface ReportResult<T = any> {
     data: T[];
     sql: string;
     executionTimeMs: number;
+    /** Populated when `profiling: true` is passed to build() */
+    profile?: import('./profiling').ProfileResult;
 }
 
 /**
@@ -556,40 +562,70 @@ export class ReportWithContext {
     async build<T = any>(options?: ExecutionOptions): Promise<ReportResult<T>> {
         const startTime = Date.now();
         const strategy = options?.strategy || 'cte';
+        const profiling = options?.profiling ?? false;
         const { plan, sourceTableMap } = await this.preparePlan();
         const prepareMs = Date.now() - startTime;
 
         let data: any[];
         let sql: string;
+        let profile: ProfileResult | undefined;
 
         const tExec = Date.now();
         if (strategy === 'temp_tables') {
             const result = await this.executeTempTableMode(plan, sourceTableMap, options);
             data = result.data;
             sql = result.sql;
+            profile = result.profile;
         } else {
             // CTE mode (default)
+            const conn = this.executor.getConnection();
             const generator = new SQLGenerator({ formatted: true });
             const generated = generator.generate(plan, sourceTableMap);
             sql = generated.sql;
+
+            const memoryBefore = profiling ? await queryMemorySnapshot(conn) : [];
 
             // Apply formatting if configured
             if (this.formatConfig) {
                 // Create temp table from main query result
                 const mainResultTable = 'temp_report_result';
-                await this.executor.getConnection().run(`CREATE TEMP TABLE ${mainResultTable} AS ${sql}`);
+                await conn.run(`CREATE TEMP TABLE ${mainResultTable} AS ${sql}`);
 
                 // Generate formatting SQL
                 const formatSQL = generateFormatCTE(mainResultTable, this.formatConfig);
                 data = await this.executor.runQuery(formatSQL);
 
                 // Cleanup
-                await this.executor.getConnection().run(`DROP TABLE IF EXISTS ${mainResultTable}`);
+                await conn.run(`DROP TABLE IF EXISTS ${mainResultTable}`);
 
                 // Update SQL for debugging (show both queries)
                 sql = `-- Main query:\n${sql}\n\n-- Formatting:\n${formatSQL}`;
             } else {
                 data = await this.executor.runQuery(sql);
+            }
+
+            if (profiling) {
+                const memoryAfter = await queryMemorySnapshot(conn);
+                const cteExecMs = Date.now() - tExec;
+                const explainAnalyze = await runExplainAnalyze(conn, generated.sql);
+
+                const allSnapshots = [memoryBefore, memoryAfter];
+                const peakBytes = Math.max(...allSnapshots.map(sumMemoryBytes));
+
+                profile = {
+                    strategy: 'cte',
+                    totalDurationMs: cteExecMs,
+                    totalRows: data.length,
+                    memoryPeakBytes: peakBytes,
+                    queryProfile: {
+                        explainAnalyze,
+                        totalDurationMs: cteExecMs,
+                        rowCount: data.length,
+                        memoryBefore,
+                        memoryAfter,
+                        memoryDeltaBytes: sumMemoryBytes(memoryAfter) - sumMemoryBytes(memoryBefore),
+                    },
+                };
             }
         }
         const execMs = Date.now() - tExec;
@@ -603,10 +639,15 @@ export class ReportWithContext {
             strategy,
         });
 
+        if (profile) {
+            this._logger.onProfileComplete?.({ profile });
+        }
+
         return {
             data: data as T[],
             sql,
             executionTimeMs,
+            profile,
         };
     }
 
@@ -668,8 +709,9 @@ export class ReportWithContext {
         plan: QueryPlan,
         sourceTableMap: Map<string, string>,
         options?: ExecutionOptions
-    ): Promise<{ data: any[]; sql: string }> {
+    ): Promise<{ data: any[]; sql: string; profile?: ProfileResult }> {
         const generator = new SQLGenerator({ formatted: true });
+        const profiling = options?.profiling ?? false;
 
         // Create a working copy of the table map
         const workingTableMap = new Map<string, string>(sourceTableMap);
@@ -677,6 +719,13 @@ export class ReportWithContext {
         const tempTablePlan = generator.generateTempTablePlan(plan, workingTableMap);
         const connection = this.executor.getConnection();
         const executedSQL: string[] = [];
+
+        // Profiling state
+        const stepProfiles: StepProfile[] = [];
+        let previousMemory = profiling ? await queryMemorySnapshot(connection) : [];
+        let previousTime = Date.now();
+        let peakMemoryBytes = profiling ? sumMemoryBytes(previousMemory) : 0;
+        const baselineMemory = previousMemory;
 
         try {
             // Execute each step with callbacks
@@ -690,6 +739,30 @@ export class ReportWithContext {
                 // Update table map to use the new temp table
                 // Temp tables use same names as CTEs so no prefix mapping needed
                 workingTableMap.set(step.tableName, step.tableName);
+
+                // Collect profiling data for this step
+                if (profiling) {
+                    const now = Date.now();
+                    const memoryAfter = await queryMemorySnapshot(connection);
+                    const rowCount = await queryRowCount(connection, step.tableName);
+                    const afterBytes = sumMemoryBytes(memoryAfter);
+                    if (afterBytes > peakMemoryBytes) peakMemoryBytes = afterBytes;
+
+                    stepProfiles.push({
+                        name: step.name,
+                        tableName: step.tableName,
+                        stepNumber: i,
+                        durationMs: now - previousTime,
+                        rowCount,
+                        memoryBefore: previousMemory,
+                        memoryAfter,
+                        memoryDeltaBytes: afterBytes - sumMemoryBytes(previousMemory),
+                        sql: step.sql,
+                    });
+
+                    previousMemory = memoryAfter;
+                    previousTime = now;
+                }
 
                 // Fire onStep callback
                 if (options?.onStep) {
@@ -768,7 +841,19 @@ export class ReportWithContext {
             // Return combined SQL for debugging
             const combinedSQL = executedSQL.join(';\n\n');
 
-            return { data, sql: combinedSQL };
+            // Build profile result
+            let profile: ProfileResult | undefined;
+            if (profiling) {
+                profile = {
+                    strategy: 'temp_tables',
+                    totalDurationMs: stepProfiles.reduce((sum, s) => sum + s.durationMs, 0),
+                    totalRows: data.length,
+                    memoryPeakBytes: peakMemoryBytes,
+                    steps: stepProfiles,
+                };
+            }
+
+            return { data, sql: combinedSQL, profile };
         } finally {
             // Cleanup temp tables even if an error occurred
             if (!options?.keepTempTables) {

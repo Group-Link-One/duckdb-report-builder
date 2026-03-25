@@ -79,6 +79,18 @@ export interface ExecutionOptions {
      * Only applicable in temp_tables mode.
      */
     keepTempTables?: boolean;
+
+    /**
+     * Enable profiling/stats collection. Collects duckdb_memory() snapshots,
+     * timing, and row counts. Emitted via logger.onProfileComplete() and
+     * returned in ReportResult.profile.
+     *
+     * - CTE mode: memory before/after + EXPLAIN ANALYZE
+     * - Temp tables mode: per-step memory deltas, timing, and row counts
+     *
+     * Zero overhead when disabled (default: false).
+     */
+    profiling?: boolean;
 }
 
 /**

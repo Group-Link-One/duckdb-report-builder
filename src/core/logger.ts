@@ -59,6 +59,8 @@ export interface ProviderEvent {
     meta?: Record<string, unknown>;
 }
 
+export type { ProfileCompleteEvent } from './profiling';
+
 // ── Logger interface ────────────────────────────────────────────
 
 /**
@@ -76,6 +78,9 @@ export interface ReportLogger {
 
     /** Generic provider-level event (e.g., CSV load timing, timeline generation) */
     onProviderEvent?(event: ProviderEvent): void;
+
+    /** Profiling data collected (only fires when profiling is enabled) */
+    onProfileComplete?(event: import('./profiling').ProfileCompleteEvent): void;
 }
 
 // ── Built-in loggers ────────────────────────────────────────────
@@ -103,6 +108,25 @@ export function consoleLogger(prefix = 'report-builder'): Required<ReportLogger>
         },
         onProviderEvent({ provider, tableName, message }) {
             console.log(`[${prefix}:${provider}] ${tableName}: ${message}`);
+        },
+        onProfileComplete({ profile }) {
+            const peakMB = (profile.memoryPeakBytes / 1024 / 1024).toFixed(2);
+            console.log(
+                `[${prefix}] profile: strategy=${profile.strategy} | peak=${peakMB}MB | rows=${profile.totalRows} | total=${profile.totalDurationMs}ms`,
+            );
+            if (profile.steps) {
+                for (const step of profile.steps) {
+                    const deltaMB = (step.memoryDeltaBytes / 1024 / 1024).toFixed(2);
+                    console.log(
+                        `[${prefix}]   step ${step.stepNumber}: ${step.name} | ${step.durationMs}ms | rows=${step.rowCount} | mem-delta=${deltaMB}MB`,
+                    );
+                }
+            }
+            if (profile.queryProfile) {
+                const deltaMB = (profile.queryProfile.memoryDeltaBytes / 1024 / 1024).toFixed(2);
+                console.log(`[${prefix}]   cte mem-delta=${deltaMB}MB`);
+                console.log(`[${prefix}]   explain-analyze:\n${profile.queryProfile.explainAnalyze}`);
+            }
         },
     };
 }
