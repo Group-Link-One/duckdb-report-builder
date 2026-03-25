@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.3] - 2026-03-25
+
+### Added
+- **`buildToFile()` method**: Stream results directly to CSV, Parquet, or JSON via DuckDB `COPY TO`
+  — no rows materialized in Node.js memory. Ideal for large exports. Supports `format`, `delimiter`,
+  `header`, and `sorted` options (`sorted: false` skips ORDER BY for ~5x speedup on large datasets).
+  Includes DuckDB progress tracking via logger events.
+- **PRAGMA JSON profiling**: Replaced `EXPLAIN ANALYZE` with zero-overhead `PRAGMA profiling` that
+  collects per-operator timing during normal query execution. New `ProfileResult.raw` field exposes
+  the full DuckDB operator tree with cumulative metrics.
+- New exported types: `PragmaProfileNode`, `PragmaProfileOutput`.
+- New exported helpers: `enablePragmaProfiling()`, `disablePragmaProfiling()`, `readPragmaProfile()`,
+  `formatPragmaProfile()`.
+
 ## [0.2.2] - 2026-03-25
 
 ### Added

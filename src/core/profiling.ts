@@ -55,6 +55,8 @@ export interface ProfileResult {
     steps?: StepProfile[];
     /** Populated only for CTE mode */
     queryProfile?: CTEQueryProfile;
+    /** Raw DuckDB PRAGMA profile JSON — full operator tree with cumulative metrics */
+    raw?: PragmaProfileOutput;
 }
 
 // ── Logger event ─────────────────────────────────────────────
@@ -106,21 +108,132 @@ export async function queryRowCount(conn: DuckDBConnection, tableName: string): 
     return Number(rows[0]?.cnt ?? 0);
 }
 
+// ── PRAGMA profiling (zero-overhead replacement for EXPLAIN ANALYZE) ──
+
 /**
- * Run EXPLAIN ANALYZE and return the output as a string.
+ * DuckDB PRAGMA profiling JSON node structure.
+ * Represents one operator in the query execution tree.
  */
-export async function runExplainAnalyze(conn: DuckDBConnection, sql: string): Promise<string> {
-    const result = await conn.run(`EXPLAIN ANALYZE ${sql}`);
-    const columnNames = Array.from({ length: result.columnCount }, (_, i) => result.columnName(i));
+export interface PragmaProfileNode {
+    /** DuckDB v1.2+ uses operator_name */
+    operator_name?: string;
+    /** Fallback for older DuckDB versions */
+    name?: string;
+    operator_type?: string;
+    /** Per-operator timing in seconds (DuckDB v1.2+) */
+    operator_timing?: number;
+    /** Fallback timing */
+    timing?: number;
+    /** Rows produced by this operator (DuckDB v1.2+) */
+    operator_cardinality?: number;
+    /** Fallback cardinality */
+    cardinality?: number;
+    /** Operator details — object in v1.2+, string in older versions */
+    extra_info?: Record<string, unknown> | string;
+    children?: PragmaProfileNode[];
+    [key: string]: unknown;
+}
+
+/**
+ * Top-level DuckDB PRAGMA profiling JSON output.
+ */
+export interface PragmaProfileOutput {
+    query_name?: string;
+    /** DuckDB v1.2+ uses latency */
+    latency?: number;
+    timing?: number;
+    /** DuckDB v1.2+ uses rows_returned */
+    rows_returned?: number;
+    cardinality?: number;
+    cpu_time?: number;
+    children?: PragmaProfileNode[];
+    [key: string]: unknown;
+}
+
+/**
+ * Enable PRAGMA JSON profiling that collects per-operator timing during normal execution.
+ * Call this BEFORE running the query. The profile is written to `outputPath` automatically.
+ *
+ * @returns The file path where the profile will be written.
+ */
+export async function enablePragmaProfiling(conn: DuckDBConnection, outputPath: string): Promise<string> {
+    await conn.run(`SET enable_profiling = 'json'`);
+    await conn.run(`SET profiling_output = '${outputPath}'`);
+    return outputPath;
+}
+
+/**
+ * Disable PRAGMA profiling (reset to default).
+ */
+export async function disablePragmaProfiling(conn: DuckDBConnection): Promise<void> {
+    await conn.run(`RESET enable_profiling`);
+}
+
+/**
+ * Read and parse the PRAGMA profiling JSON file written by DuckDB.
+ * Cleans up the file after reading.
+ *
+ * @returns Parsed profile output, or null if file not found / parse error.
+ */
+export function readPragmaProfile(outputPath: string): PragmaProfileOutput | null {
+    const fs = require('fs');
+    if (!fs.existsSync(outputPath)) return null;
+    const content = fs.readFileSync(outputPath, 'utf-8');
+    try { fs.unlinkSync(outputPath); } catch {}
+    try {
+        return JSON.parse(content) as PragmaProfileOutput;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Flatten the DuckDB PRAGMA profile tree into a human-readable text representation.
+ * Used to populate `CTEQueryProfile.explainAnalyze` for backward compatibility.
+ */
+export function formatPragmaProfile(profile: PragmaProfileOutput): string {
     const lines: string[] = [];
 
-    for (let chunkIndex = 0; chunkIndex < result.chunkCount; chunkIndex++) {
-        const chunk = result.getChunk(chunkIndex);
-        const rows = chunk.getRowObjects(columnNames);
-        for (const row of rows) {
-            // EXPLAIN ANALYZE typically returns rows with explain_key/explain_value or similar
-            const values = Object.values(row);
-            lines.push(values.join('\t'));
+    const totalTime = profile.latency ?? profile.timing;
+    const totalRows = profile.rows_returned ?? profile.cardinality;
+    if (totalTime != null) {
+        lines.push(`Total Time: ${totalTime.toFixed(3)}s`);
+    }
+    if (totalRows != null) {
+        lines.push(`Total Rows: ${totalRows}`);
+    }
+    lines.push('');
+
+    function walk(node: PragmaProfileNode, depth: number) {
+        const indent = '  '.repeat(depth);
+        const name = node.operator_name || node.name || node.operator_type || 'unknown';
+        const timing = (node.operator_timing ?? node.timing) != null
+            ? ` (${(node.operator_timing ?? node.timing)!.toFixed(3)}s)` : '';
+        const rows = (node.operator_cardinality ?? node.cardinality) != null
+            ? ` [${node.operator_cardinality ?? node.cardinality} rows]` : '';
+        lines.push(`${indent}${name}${timing}${rows}`);
+        if (node.extra_info) {
+            if (typeof node.extra_info === 'object') {
+                for (const [key, val] of Object.entries(node.extra_info)) {
+                    const valStr = Array.isArray(val) ? val.join(', ') : String(val);
+                    lines.push(`${indent}  ${key}: ${valStr}`);
+                }
+            } else {
+                for (const info of String(node.extra_info).split('\n')) {
+                    if (info.trim()) lines.push(`${indent}  ${info.trim()}`);
+                }
+            }
+        }
+        if (node.children) {
+            for (const child of node.children) {
+                walk(child, depth + 1);
+            }
+        }
+    }
+
+    if (profile.children) {
+        for (const child of profile.children) {
+            walk(child, 0);
         }
     }
 

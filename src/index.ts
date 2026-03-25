@@ -20,7 +20,9 @@ export {
 } from './core/logger';
 export {
     createProfilingCallback, queryMemorySnapshot, sumMemoryBytes,
+    enablePragmaProfiling, disablePragmaProfiling, readPragmaProfile, formatPragmaProfile,
     type CTEQueryProfile, type MemorySnapshot, type ProfileResult, type StepProfile,
+    type PragmaProfileNode, type PragmaProfileOutput,
 } from './core/profiling';
 export { ReportWithContext, type ReportResult, type DuckDBConfig } from './core/report-with-context';
 // Fluent API Configuration Types

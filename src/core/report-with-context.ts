@@ -25,6 +25,7 @@
  * ```
  */
 
+import { DuckDBPendingResultState } from '@duckdb/node-api';
 import { IDataSourceProvider, LoadContext } from '../providers/i-data-source-provider';
 import {
     AggregationStrategy, ApplyEnrichmentTransform, CoarsenTransform, EnrichmentFormula, FilterSpec, JoinTransform, LocfTransform, OutputColumn, PivotTransform, PlanContext, QueryPlan, SourceSpec, TimeGranularity, TimezoneTransform, TransformSpec, validateQueryPlan, WindowFunctionSpec, WindowTransform
@@ -35,8 +36,8 @@ import { DuckDBQueryExecutor } from './duckdb-query-executor';
 import { ExecutionOptions, StepInfo } from './execution-strategy';
 import { ReportLogger, silentLogger } from './logger';
 import {
-    ProfileResult, queryMemorySnapshot, queryRowCount, runExplainAnalyze, sumMemoryBytes,
-    StepProfile,
+    ProfileResult, queryMemorySnapshot, queryRowCount, sumMemoryBytes,
+    StepProfile, enablePragmaProfiling, disablePragmaProfiling, readPragmaProfile, formatPragmaProfile,
 } from './profiling';
 
 /**
@@ -632,6 +633,13 @@ export class ReportWithContext {
 
             const memoryBefore = profiling ? await queryMemorySnapshot(conn) : [];
 
+            // Enable PRAGMA profiling (zero overhead — collects during normal execution)
+            let profileOutputPath: string | undefined;
+            if (profiling) {
+                profileOutputPath = `/tmp/duckdb-profile-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
+                await enablePragmaProfiling(conn, profileOutputPath);
+            }
+
             // Apply formatting if configured
             if (this.formatConfig) {
                 // Create temp table from main query result
@@ -652,9 +660,13 @@ export class ReportWithContext {
             }
 
             if (profiling) {
+                await disablePragmaProfiling(conn);
                 const memoryAfter = await queryMemorySnapshot(conn);
                 const cteExecMs = Date.now() - tExec;
-                const explainAnalyze = await runExplainAnalyze(conn, generated.sql);
+
+                // Read PRAGMA profile JSON (written automatically during query execution)
+                const pragmaProfile = profileOutputPath ? readPragmaProfile(profileOutputPath) : null;
+                const explainAnalyze = pragmaProfile ? formatPragmaProfile(pragmaProfile) : '';
 
                 const allSnapshots = [memoryBefore, memoryAfter];
                 const peakBytes = Math.max(...allSnapshots.map(sumMemoryBytes));
@@ -664,6 +676,7 @@ export class ReportWithContext {
                     totalDurationMs: cteExecMs,
                     totalRows: data.length,
                     memoryPeakBytes: peakBytes,
+                    raw: pragmaProfile ?? undefined,
                     queryProfile: {
                         explainAnalyze,
                         totalDurationMs: cteExecMs,
@@ -696,6 +709,151 @@ export class ReportWithContext {
             executionTimeMs,
             profile,
         };
+    }
+
+    /**
+     * Build the query plan and write results directly to a file via DuckDB COPY TO.
+     * No rows are materialized in Node.js memory — ideal for large exports.
+     *
+     * Supports CSV, Parquet, and JSON output. ORDER BY is kept by default.
+     * Pass `sorted: false` to skip ORDER BY (~5x speedup on large datasets).
+     *
+     * @param filePath - Output file path
+     * @param options - Format, execution options, CSV-specific options
+     * @returns Row count, SQL, and execution time
+     */
+    async buildToFile(filePath: string, options?: ExecutionOptions & {
+        /** Output format. Default: 'csv' */
+        format?: 'csv' | 'parquet' | 'json';
+        /** CSV delimiter. Default: ';' */
+        delimiter?: string;
+        /** Include header row (CSV/JSON). Default: true */
+        header?: boolean;
+        /** Keep ORDER BY from the query plan. Default: true. Set to false to skip ORDER BY for ~5x speedup on large datasets. */
+        sorted?: boolean;
+    }): Promise<{ rowCount: number; sql: string; executionTimeMs: number; profile?: ProfileResult }> {
+        const startTime = Date.now();
+        const profiling = options?.profiling ?? false;
+        const { plan, sourceTableMap } = await this.preparePlan();
+
+        // Strip ORDER BY if sorted=false — saves ~90% exec time on large datasets
+        if (options?.sorted === false && plan.output.orderBy) {
+            plan.output.orderBy = undefined;
+        }
+
+        const prepareMs = Date.now() - startTime;
+
+        const conn = this.executor.getConnection();
+        const generator = new SQLGenerator({ formatted: true });
+        const generated = generator.generate(plan, sourceTableMap);
+        const sql = generated.sql;
+
+        const memoryBefore = profiling ? await queryMemorySnapshot(conn) : [];
+
+        // Enable PRAGMA profiling (zero overhead — collects during normal execution)
+        let profileOutputPath: string | undefined;
+        if (profiling) {
+            profileOutputPath = `/tmp/duckdb-profile-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
+            await enablePragmaProfiling(conn, profileOutputPath);
+        }
+
+        const format = options?.format ?? 'csv';
+        const copyOptions: string[] = [];
+        switch (format) {
+            case 'parquet':
+                copyOptions.push('FORMAT PARQUET');
+                break;
+            case 'json':
+                copyOptions.push('FORMAT JSON');
+                break;
+            case 'csv':
+            default: {
+                const header = options?.header !== false;
+                const delimiter = options?.delimiter ?? ';';
+                copyOptions.push(`FORMAT CSV`, `HEADER ${header}`);
+                if (delimiter) copyOptions.push(`DELIMITER '${delimiter}'`);
+                break;
+            }
+        }
+
+        const tExec = Date.now();
+        const tmpTable = `__export_${Date.now()}`;
+
+        // Enable progress tracking and execute with polling
+        await conn.run("SET enable_progress_bar = true");
+        await conn.run("SET enable_progress_bar_print = false");
+        const pending = await conn.start(`CREATE TEMP TABLE ${tmpTable} AS ${sql}`);
+        let state: DuckDBPendingResultState;
+        let lastPct = -1;
+        do {
+            state = pending.runTask();
+            const p = conn.progress;
+            if (p.percentage >= 0 && Math.floor(p.percentage) !== Math.floor(lastPct)) {
+                lastPct = p.percentage;
+                this._logger.onProviderEvent?.({
+                    provider: 'DuckDB',
+                    tableName: tmpTable,
+                    message: `${p.percentage.toFixed(1)}% — ${p.rows_processed}/${p.total_rows_to_process} rows`,
+                });
+            }
+        } while (state !== DuckDBPendingResultState.RESULT_READY);
+        await pending.getResult();
+
+        // Read profile NOW, before COPY TO overwrites it
+        let pragmaProfile: import('./profiling').PragmaProfileOutput | null = null;
+        if (profiling && profileOutputPath) {
+            await disablePragmaProfiling(conn);
+            pragmaProfile = readPragmaProfile(profileOutputPath);
+            profileOutputPath = undefined; // prevent double-read below
+        }
+
+        const countResult = await this.executor.runQuery(`SELECT count(*) as cnt FROM ${tmpTable}`);
+        const rowCount = Number(countResult[0]?.cnt ?? 0);
+        await conn.run(`COPY ${tmpTable} TO '${filePath}' (${copyOptions.join(', ')})`);
+        await conn.run(`DROP TABLE IF EXISTS ${tmpTable}`);
+
+        const execMs = Date.now() - tExec;
+
+        let profile: ProfileResult | undefined;
+        if (profiling) {
+            const memoryAfter = await queryMemorySnapshot(conn);
+            const explainAnalyze = pragmaProfile ? formatPragmaProfile(pragmaProfile) : '';
+
+            const allSnapshots = [memoryBefore, memoryAfter];
+            const peakBytes = Math.max(...allSnapshots.map(sumMemoryBytes));
+            profile = {
+                strategy: 'cte',
+                totalDurationMs: execMs,
+                totalRows: rowCount,
+                memoryPeakBytes: peakBytes,
+                queryProfile: {
+                    explainAnalyze,
+                    totalDurationMs: execMs,
+                    rowCount,
+                    memoryBefore,
+                    memoryAfter,
+                    memoryDeltaBytes: sumMemoryBytes(memoryAfter) - sumMemoryBytes(memoryBefore),
+                },
+                raw: pragmaProfile ?? undefined,
+            };
+        }
+
+        const executionTimeMs = Date.now() - startTime;
+        this._logger.onBuildComplete?.({
+            prepareMs,
+            executeMs: execMs,
+            totalMs: executionTimeMs,
+            rows: rowCount,
+            strategy: 'cte',
+        });
+
+        if (profile) {
+            this._logger.onProfileComplete?.({ profile });
+        }
+
+        await this.executor.close();
+
+        return { rowCount, sql, executionTimeMs, profile };
     }
 
     private async preparePlan(): Promise<{ plan: QueryPlan; sourceTableMap: Map<string, string> }> {
