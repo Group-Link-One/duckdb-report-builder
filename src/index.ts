@@ -47,7 +47,13 @@ export {
 export { FileSink } from './sinks/file-sink';
 export { buildCTE, quoteIdentifier } from './sql-generator/cte-builder';
 // Format Generator
-export { generateFormatCTE, formatValue, type FormatConfig } from './sql-generator/format-generator';
+export {
+    generateFormatCTE, formatValue,
+    generateFormatSQL, generateRenameSQL,
+    getLocaleCSVDelimiter,
+    LOCALE_DEFAULTS,
+    type FormatConfig, type ColumnFormatConfig, type FormatColumnSchema, type Locale,
+} from './sql-generator/format-generator';
 // SQL Generator (exposed for advanced use cases)
 export { SQLGenerator, type GeneratedSQL, type GeneratedTempTablePlan, type TempTableStep, type SQLGeneratorOptions } from './sql-generator/sql-generator';
 

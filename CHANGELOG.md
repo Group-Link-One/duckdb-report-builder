@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.3.0] - 2026-04-07
+
+### Added
+- **Last-mile formatting system**: Complete redesign of the format layer. Formatting now
+  **replaces** columns (instead of appending `_formatted` suffixes) and works across all
+  execution paths: `build()` (CTE and temp_tables strategies) and `buildToFile()` (CSV, JSON, Parquet).
+- **Auto-detection by column type**: When `.format()` is configured, the system queries
+  `information_schema.columns` to detect each column's DuckDB type and applies locale-aware
+  formatting automatically:
+  - `DATE` → `strftime(col, dateFormat)`
+  - `TIMESTAMP` → `strftime(col, dateTimeFormat)`
+  - `TIMESTAMP WITH TIME ZONE` → `strftime(col, dateTimeTZFormat)` (includes UTC offset)
+  - `DOUBLE`, `FLOAT`, `DECIMAL(...)` → `format(spec, col)` (only when `decimalPlaces` is set)
+  - Integer types, `VARCHAR`, others → pass-through (not auto-formatted)
+- **Column renames**: `ColumnFormatConfig.rename` renames columns in output via `AS "New Name"`.
+  Works for all output formats including Parquet.
+- **`raw` flag**: `ColumnFormatConfig.raw` skips auto-formatting for columns that happen to be
+  numeric but should stay raw (e.g., IDs). Renames still apply.
+- **Locale shorthand**: `.format('pt-BR')` as shorthand for `.format({ locale: 'pt-BR' })`.
+- **Global format defaults**: `FormatConfig` now supports `dateFormat`, `dateTimeFormat`,
+  `dateTimeTZFormat`, and `decimalPlaces` at the top level, applied to all matching columns
+  unless overridden per-column.
+- **Timezone-aware date formatting**: New `dateTimeTZFormat` field for `TIMESTAMP WITH TIME ZONE`
+  columns. Locale defaults include `%z` for UTC offset (e.g., `+03`, `-05`). Supports `%Z`
+  for timezone abbreviation.
+- **Parquet-safe formatting**: `buildToFile()` with `format: 'parquet'` applies renames only
+  (no text casting), preserving native DuckDB types.
+- **`generateFormatSQL()`**: New function that generates a formatting SELECT with column
+  replacement, type auto-detection, and renames. Replaces `generateFormatCTE()`.
+- **`generateRenameSQL()`**: New function for rename-only SELECTs (used for Parquet exports).
+- **`LOCALE_DEFAULTS`**: Exported constant with locale-specific defaults for dates, timestamps,
+  and number formatting.
+- New exported types: `ColumnFormatConfig`, `FormatColumnSchema`, `Locale`.
+- New exported function: `getLocaleCSVDelimiter()`.
+
+### Changed
+- `FormatConfig.columns` is now **optional** (was required). When omitted, all formatting
+  is driven by auto-detection + global defaults.
+- `.format()` method now accepts `FormatConfig | Locale` (string shorthand).
+- `buildToFile()` now applies formatting when `.format()` is configured (previously ignored).
+
+### Deprecated
+- `generateFormatCTE()` — use `generateFormatSQL()` instead (replaces columns, supports
+  schema auto-detection and renames).
+- `formatValue()` — use `generateFormatSQL()` for full-query formatting.
+
 ## [0.2.3] - 2026-03-25
 
 ### Added

@@ -30,7 +30,7 @@ import { IDataSourceProvider, LoadContext } from '../providers/i-data-source-pro
 import {
     AggregationStrategy, ApplyEnrichmentTransform, CoarsenTransform, EnrichmentFormula, FilterSpec, JoinTransform, LocfTransform, OutputColumn, PivotTransform, PlanContext, QueryPlan, SourceSpec, TimeGranularity, TimezoneTransform, TransformSpec, validateQueryPlan, WindowFunctionSpec, WindowTransform
 } from '../query-plan/query-plan';
-import { FormatConfig, generateFormatCTE } from '../sql-generator/format-generator';
+import { FormatConfig, FormatColumnSchema, Locale, generateFormatCTE, generateFormatSQL, generateRenameSQL } from '../sql-generator/format-generator';
 import { SQLGenerator } from '../sql-generator/sql-generator';
 import { DuckDBQueryExecutor } from './duckdb-query-executor';
 import { ExecutionOptions, StepInfo } from './execution-strategy';
@@ -571,33 +571,66 @@ export class ReportWithContext {
     }
 
     /**
-     * Apply formatting to output columns
+     * Apply last-mile formatting to output columns.
      *
-     * Formatting is applied as the final step before returning results.
-     * Uses DuckDB's format() function for locale-specific number/date formatting.
+     * Formatting is applied as the **final step** before returning results — after all
+     * transforms, joins, and filters have been executed. It works by creating a temp table
+     * from the query result, querying its column types from `information_schema.columns`,
+     * and generating a formatting SELECT with DuckDB's `format()` and `strftime()` functions.
      *
-     * @param config - Format configuration with locale and column-specific rules
+     * ## Supported execution paths
+     *
+     * | Method | Behavior |
+     * |--------|----------|
+     * | `build()` (CTE strategy) | Full formatting + renames applied to in-memory results |
+     * | `build()` (temp_tables strategy) | Full formatting + renames applied to in-memory results |
+     * | `buildToFile()` CSV/JSON | Full formatting + renames applied before COPY TO |
+     * | `buildToFile()` Parquet | **Renames only** — native types preserved (no text casting) |
+     * | `toSQL()` | **Not applied** — dry-run has no temp table to detect types from |
+     *
+     * ## Auto-detection rules
+     *
+     * When no per-column config is provided, columns are auto-formatted based on their
+     * DuckDB type and the locale defaults:
+     *
+     * | DuckDB Type | Action | Condition |
+     * |-------------|--------|-----------|
+     * | `DATE` | `strftime(col, dateFormat)` | Always |
+     * | `TIMESTAMP` | `strftime(col, dateTimeFormat)` | Always |
+     * | `TIMESTAMP WITH TIME ZONE` | `strftime(col, dateTimeTZFormat)` | Always (includes UTC offset) |
+     * | `DOUBLE`, `FLOAT`, `DECIMAL(...)` | `format(spec, col)` | Only when `decimalPlaces` is set |
+     * | `INTEGER`, `BIGINT`, etc. | Pass-through | Never auto-formatted (typically IDs) |
+     * | `VARCHAR`, `BOOLEAN`, others | Pass-through | Never auto-formatted |
+     *
+     * Accepts either a full FormatConfig or a Locale string shorthand (e.g. 'pt-BR').
+     *
+     * @param config - Format configuration with locale and column-specific rules, or a Locale string
      * @returns this (for chaining)
      *
      * @example
      * ```typescript
-     * new ReportWithContext([100n])
-     *     .period(from, until, 'UTC')
-     *     .source([...])
-     *     .select(['device_id', 'consumption', 'cost', 'timestamp'])
-     *     .format({
-     *         locale: 'pt-BR',
-     *         columns: {
-     *             consumption: { decimalPlaces: 3, unit: 'm³' },
-     *             cost: { decimalPlaces: 2, currency: 'R$' },
-     *             timestamp: { dateFormat: '%d/%m/%Y %H:%M:%S' }
-     *         }
-     *     })
-     *     .build();
+     * // Full config with renames, per-column overrides, and global defaults
+     * report.format({
+     *     locale: 'pt-BR',
+     *     decimalPlaces: 2,
+     *     columns: {
+     *         consumption: { decimalPlaces: 3, unit: 'm³', rename: 'Consumo' },
+     *         cost: { decimalPlaces: 2, currency: 'R$' },
+     *         timestamp: { dateFormat: '%d/%m/%Y %H:%M:%S' },
+     *         device_id: { raw: true, rename: 'ID' },  // skip formatting, just rename
+     *     }
+     * });
+     *
+     * // Locale shorthand — auto-formats dates by type, no number formatting
+     * report.format('pt-BR');
      * ```
      */
-    format(config: FormatConfig): this {
-        this.formatConfig = config;
+    format(config: FormatConfig | Locale): this {
+        if (typeof config === 'string') {
+            this.formatConfig = { locale: config };
+        } else {
+            this.formatConfig = config;
+        }
         return this;
     }
 
@@ -646,8 +679,9 @@ export class ReportWithContext {
                 const mainResultTable = 'temp_report_result';
                 await conn.run(`CREATE TEMP TABLE ${mainResultTable} AS ${sql}`);
 
-                // Generate formatting SQL
-                const formatSQL = generateFormatCTE(mainResultTable, this.formatConfig);
+                // Query schema and generate formatting SQL
+                const schema = await this.queryTableSchema(mainResultTable);
+                const formatSQL = generateFormatSQL(mainResultTable, schema, this.formatConfig);
                 data = await this.executor.runQuery(formatSQL);
 
                 // Cleanup
@@ -809,8 +843,28 @@ export class ReportWithContext {
 
         const countResult = await this.executor.runQuery(`SELECT count(*) as cnt FROM ${tmpTable}`);
         const rowCount = Number(countResult[0]?.cnt ?? 0);
-        await conn.run(`COPY ${tmpTable} TO '${filePath}' (${copyOptions.join(', ')})`);
-        await conn.run(`DROP TABLE IF EXISTS ${tmpTable}`);
+
+        if (this.formatConfig) {
+            const schema = await this.queryTableSchema(tmpTable);
+            const fmtTable = `${tmpTable}_fmt`;
+
+            if (format === 'parquet') {
+                // Parquet: only renames, preserve native types
+                const renameSQL = generateRenameSQL(tmpTable, schema, this.formatConfig);
+                await conn.run(`CREATE TEMP TABLE ${fmtTable} AS ${renameSQL}`);
+            } else {
+                // CSV/JSON: full formatting + renames
+                const formatSQL = generateFormatSQL(tmpTable, schema, this.formatConfig);
+                await conn.run(`CREATE TEMP TABLE ${fmtTable} AS ${formatSQL}`);
+            }
+
+            await conn.run(`COPY ${fmtTable} TO '${filePath}' (${copyOptions.join(', ')})`);
+            await conn.run(`DROP TABLE IF EXISTS ${fmtTable}`);
+            await conn.run(`DROP TABLE IF EXISTS ${tmpTable}`);
+        } else {
+            await conn.run(`COPY ${tmpTable} TO '${filePath}' (${copyOptions.join(', ')})`);
+            await conn.run(`DROP TABLE IF EXISTS ${tmpTable}`);
+        }
 
         const execMs = Date.now() - tExec;
 
@@ -905,6 +959,17 @@ export class ReportWithContext {
         }
 
         return { plan, sourceTableMap };
+    }
+
+    /**
+     * Query column schema from a temp table via information_schema.
+     * Returns column names and raw DuckDB type strings in ordinal order.
+     */
+    private async queryTableSchema(tableName: string): Promise<FormatColumnSchema[]> {
+        const rows = await this.executor.runQuery(
+            `SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '${tableName}' ORDER BY ordinal_position`
+        );
+        return rows.map((r: any) => ({ name: r.column_name, type: r.data_type }));
     }
 
     /**
@@ -1032,8 +1097,9 @@ export class ReportWithContext {
                 await connection.run(createFormattedSQL);
                 executedSQL.push(createFormattedSQL);
 
-                // Generate and execute formatting SQL
-                const formatSQL = generateFormatCTE(formattedResultTable, this.formatConfig);
+                // Query schema and generate formatting SQL
+                const schema = await this.queryTableSchema(formattedResultTable);
+                const formatSQL = generateFormatSQL(formattedResultTable, schema, this.formatConfig);
                 executedSQL.push(formatSQL);
                 data = await this.executor.runQuery(formatSQL);
 
@@ -1074,9 +1140,13 @@ export class ReportWithContext {
     }
 
     /**
-     * Generate SQL without executing
+     * Generate SQL without executing.
      *
-     * @returns Generated SQL string
+     * **Note:** `.format()` configuration is NOT reflected in the output.
+     * Formatting requires a temp table + `information_schema.columns` query to detect
+     * column types, which is only available during actual execution (`build()` / `buildToFile()`).
+     *
+     * @returns Generated SQL string (without formatting layer)
      */
     async toSQL(): Promise<string> {
         const { plan, sourceTableMap } = await this.preparePlan();
