@@ -4,6 +4,8 @@
  * Helper functions for constructing Common Table Expressions (CTEs)
  */
 
+import { RESERVED_KEYWORDS } from './reserved-keywords.generated';
+
 /**
  * CTE definition
  */
@@ -43,14 +45,23 @@ export function buildWithClause(ctes: CTE[]): string {
 }
 
 /**
- * Quote an identifier if needed
+ * Quote an identifier if needed.
+ *
+ * Quotes when the identifier:
+ *  - contains characters outside `[a-zA-Z_][a-zA-Z0-9_]*`, OR
+ *  - case-insensitively matches a reserved SQL keyword (e.g. `group`,
+ *    `order`, `from`).
+ *
+ * Plain snake_case identifiers stay unquoted so SQL output remains readable.
  */
 export function quoteIdentifier(identifier: string): string {
-    // Only quote if contains special characters
-    if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(identifier)) {
-        return identifier;
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(identifier)) {
+        return `"${identifier}"`;
     }
-    return `"${identifier}"`;
+    if (RESERVED_KEYWORDS.has(identifier.toUpperCase())) {
+        return `"${identifier}"`;
+    }
+    return identifier;
 }
 
 /**

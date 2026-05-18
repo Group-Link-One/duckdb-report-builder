@@ -96,7 +96,22 @@ describe('CTE Builder', () => {
 
         it('should quote identifiers with uppercase letters', () => {
             expect(quoteIdentifier('UserName')).toBe('UserName');
-            expect(quoteIdentifier('TABLE')).toBe('TABLE');
+            // 'TABLE' is also a reserved keyword (now quoted)
+            expect(quoteIdentifier('TABLE')).toBe('"TABLE"');
+        });
+
+        it('should quote SQL reserved keywords (case-insensitive)', () => {
+            // Regression: `group` matched the bare-identifier regex and was
+            // emitted unquoted, producing `SELECT group, ...` which DuckDB
+            // rejects with a parser error. The reserved list is generated
+            // from duckdb_keywords(); `user` is intentionally absent because
+            // DuckDB classifies it as unreserved.
+            expect(quoteIdentifier('group')).toBe('"group"');
+            expect(quoteIdentifier('GROUP')).toBe('"GROUP"');
+            expect(quoteIdentifier('Order')).toBe('"Order"');
+            expect(quoteIdentifier('from')).toBe('"from"');
+            expect(quoteIdentifier('limit')).toBe('"limit"');
+            expect(quoteIdentifier('select')).toBe('"select"');
         });
 
         it('should quote identifiers starting with numbers', () => {
